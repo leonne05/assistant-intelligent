@@ -23,3 +23,5 @@ ios/Pods/
 .idea/
 .vscode/
 EOF
+# backend kept locally, excluded from Git
+/backend/
