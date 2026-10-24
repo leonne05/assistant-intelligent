@@ -23,3 +23,17 @@ assistant-intelligent/
 Le répertoire `backend/` décrit l’organisation cible de l’API. Les actions
 sensibles doivent rester en attente jusqu’à validation explicite de
 l’utilisateur.
+
+## Démarrer l’API
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell : .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+L’API est ensuite disponible sur `http://127.0.0.1:8000`. La documentation
+interactive se trouve sur `/docs`. Copiez `.env.example` vers `.env` pour
+ajouter les clés des fournisseurs LLM lorsque leur intégration sera activée.
