@@ -35,5 +35,8 @@ uvicorn main:app --reload
 ```
 
 L’API est ensuite disponible sur `http://127.0.0.1:8000`. La documentation
-interactive se trouve sur `/docs`. Copiez `.env.example` vers `.env` pour
-ajouter les clés des fournisseurs LLM lorsque leur intégration sera activée.
+interactive se trouve sur `/docs`. Copiez `.env.example` vers `.env` puis renseignez une ou plusieurs clés
+(`GROQ_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`). Les fournisseurs sont
+utilisés dans l’ordre défini par `LLM_PROVIDER_ORDER` ; par défaut :
+`groq,gemini,mistral`. Si le premier fournisseur échoue, l’API essaie le
+suivant.
