@@ -45,12 +45,13 @@ class LlmClient:
         return response
 
 
-    def transcribe(self, audio_file_name, audio_bytes, language):
+    def transcribe(self, audio_file_name, audio_bytes, language, prompt):
 
         transcription = self.get_groq_client().audio.transcriptions.create(
             file=(audio_file_name, audio_bytes),
             model="whisper-large-v3-turbo",
             language=language,
+            prompt=prompt,
         )
 
         return transcription.text
