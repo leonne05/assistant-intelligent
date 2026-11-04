@@ -23,5 +23,8 @@ ios/Pods/
 .idea/
 .vscode/
 EOF
-# backend kept locally, excluded from Git
-/backend/
+   # backend kept locally, excluded from Git (sauf les fichiers du module 6)
+   /backend/*
+   !/backend/modules/
+   !/backend/main_module6.py
+   !/backend/requirements-module6.txt
