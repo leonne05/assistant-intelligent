@@ -76,3 +76,19 @@ def get_course_transcript(course_id: str):
         raise HTTPException(status_code=404, detail="Cours introuvable.")
 
     return {"course_id": course_id, "transcript": course["transcript"], "chunk_count": course["chunk_count"]}
+
+
+@router.post("/courses/{course_id}/summary")
+def summarize_course(course_id: str):
+
+    try:
+        summary = study_service.summarize_course(course_id=course_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service de résumé est indisponible, réessaie dans une minute.")
+
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "summary": summary}
