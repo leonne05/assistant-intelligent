@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+from typing import Literal
 
 from modules.study.service import StudyService
 
@@ -11,6 +12,11 @@ study_service = StudyService()
 
 class AskRequest(BaseModel):
     text_interaction: str
+
+
+
+class EventDecision(BaseModel):
+    status: Literal["approved", "rejected"]
 
 
 
@@ -120,3 +126,41 @@ def get_course_pdf(course_id: str):
         raise HTTPException(status_code=404, detail="Aucun PDF pour ce cours.")
 
     return pdf
+
+
+@router.post("/courses/{course_id}/events/detect")
+def detect_course_events(course_id: str):
+
+    try:
+        new_events = study_service.detect_course_events(course_id=course_id)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service est indisponible, réessaie dans une minute.")
+
+    if new_events is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "new_events": new_events}
+
+
+@router.get("/courses/{course_id}/events")
+def get_course_events(course_id: str):
+    events = study_service.get_events(course_id=course_id)
+
+    if events is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "events": events}
+
+
+@router.patch("/courses/{course_id}/events/{event_id}")
+def decide_course_event(course_id: str, event_id: str, decision: EventDecision):
+
+    try:
+        event = study_service.decide_event(course_id=course_id, event_id=event_id, status=decision.status)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if event is None:
+        raise HTTPException(status_code=404, detail="Cours ou événement introuvable.")
+
+    return event

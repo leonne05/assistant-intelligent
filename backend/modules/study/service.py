@@ -1,8 +1,12 @@
 from modules.module6_llm import LlmClient
 
 from pypdf import PdfReader
+from datetime import date, datetime, timedelta
 import io
+import json
 import os
+import re
+import uuid
 
 
 class StudyService:
@@ -23,6 +27,25 @@ class StudyService:
         self.global_summary_context = LlmClient.read_file(
             file_path=os.path.join(os.path.dirname(__file__), "context_global_summary.txt")
         )
+        self.events_context = LlmClient.read_file(
+            file_path=os.path.join(os.path.dirname(__file__), "context_events.txt")
+        )
+        self.event_words = [
+            "devoir", "examen", "partiel", "contrôle", "controle", "interro", "rendu", "rendre",
+            "remettre", "projet", "soutenance", "qcm", "date limite", "avant le", "pour le",
+            "dossier", "évaluation", "evaluation", "rattrapage", "exposé", "tp noté",
+        ]
+        self.date_words = [
+            "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+            "janvier", "février", "fevrier", "mars", "avril", "mai", "juin", "juillet",
+            "août", "aout", "septembre", "octobre", "novembre", "décembre", "decembre",
+            "demain", "prochain", "semaine",
+        ]
+        self.week_days = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+        self.months = [
+            "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+            "août", "septembre", "octobre", "novembre", "décembre",
+        ]
         self.max_audio_size = 25 * 1024 * 1024
         self.max_summaries_size = 20000
         self.max_pdf_bytes = 20 * 1024 * 1024
@@ -51,6 +74,7 @@ class StudyService:
                 "chunk_summaries": [],
                 "summary": None,
                 "pdf": None,
+                "events": [],
             }
 
         return self.courses[course_id]
@@ -106,6 +130,11 @@ class StudyService:
         except Exception:
             chunk_summary = None
 
+        try:
+            new_events = self.detect_events(course=course, chunk_text=chunk_text, chunk_index=chunk_index)
+        except Exception:
+            new_events = []
+
         course["transcript"] = (course["transcript"] + " " + chunk_text).strip()
         course["chunks"].append(chunk_text)
         course["chunk_summaries"].append(chunk_summary)
@@ -116,6 +145,7 @@ class StudyService:
             "chunk_index": chunk_index,
             "chunk_text": chunk_text,
             "chunk_summary": chunk_summary,
+            "new_events": new_events,
             "chunk_count": course["chunk_count"],
         }
 
@@ -304,3 +334,154 @@ class StudyService:
             return None
 
         return self.courses[course_id]["pdf"]
+
+
+    def has_event_hint(self, text):
+
+        lower_text = text.lower()
+
+        has_event_word = any(word in lower_text for word in self.event_words)
+        has_date_word = any(word in lower_text for word in self.date_words) or any(char.isdigit() for char in lower_text)
+
+        return has_event_word and has_date_word
+
+
+    def get_calendar_text(self):
+
+        today = date.today()
+
+        lines = [f"Date du jour : {self.format_date(today)} ({today.isoformat()})", "", "Calendrier :"]
+
+        for day_number in range(1, 22):
+            day = today + timedelta(days=day_number)
+            lines.append(f"- {self.format_date(day)} ({day.isoformat()})")
+
+        return "\n".join(lines)
+
+
+    def format_date(self, day):
+        return f"{self.week_days[day.weekday()]} {day.day} {self.months[day.month - 1]} {day.year}"
+
+
+    def parse_events(self, answer):
+
+        start = answer.find("[")
+        end = answer.rfind("]")
+
+        if start == -1 or end == -1:
+            return []
+
+        try:
+            raw_events = json.loads(answer[start:end + 1])
+        except ValueError:
+            return []
+
+        today = date.today()
+        events = []
+
+        for raw_event in raw_events:
+            if not isinstance(raw_event, dict):
+                continue
+
+            try:
+                event_date = datetime.strptime(str(raw_event.get("date")), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+            if event_date < today:
+                continue
+
+            event_time = raw_event.get("time")
+            if not isinstance(event_time, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", event_time):
+                event_time = None
+
+            event_type = raw_event.get("type")
+            if event_type not in ("devoir", "examen", "autre"):
+                event_type = "autre"
+
+            events.append({
+                "type": event_type,
+                "title": str(raw_event.get("title") or "Échéance")[:120],
+                "date": event_date.isoformat(),
+                "time": event_time,
+                "source_sentence": str(raw_event.get("source_sentence") or "")[:300],
+            })
+
+        return events
+
+
+    def detect_events(self, course, chunk_text, chunk_index, paced=False):
+
+        if not self.has_event_hint(chunk_text):
+            return []
+
+        ask = self.llm_client.ask_paced if paced else self.llm_client.ask
+
+        answer = ask(
+            context=self.events_context,
+            text_interaction=self.get_calendar_text() + "\n\nExtrait du cours :\n" + chunk_text,
+        )
+
+        new_events = []
+
+        for event in self.parse_events(answer=answer):
+            already_known = any(
+                known["type"] == event["type"] and known["date"] == event["date"] and known["time"] == event["time"]
+                for known in course["events"]
+            )
+
+            if already_known:
+                continue
+
+            event["id"] = uuid.uuid4().hex[:8]
+            event["status"] = "pending"
+            event["chunk_index"] = chunk_index
+
+            course["events"].append(event)
+            new_events.append(event)
+
+        return new_events
+
+
+    def detect_course_events(self, course_id):
+
+        if course_id not in self.courses:
+            return None
+
+        course = self.courses[course_id]
+        new_events = []
+
+        for index, chunk_text in enumerate(course["chunks"]):
+            new_events += self.detect_events(
+                course=course,
+                chunk_text=chunk_text,
+                chunk_index=index + 1,
+                paced=True,
+            )
+
+        return new_events
+
+
+    def get_events(self, course_id):
+
+        if course_id not in self.courses:
+            return None
+
+        return self.courses[course_id]["events"]
+
+
+    def decide_event(self, course_id, event_id, status):
+
+        if course_id not in self.courses:
+            return None
+
+        for event in self.courses[course_id]["events"]:
+            if event["id"] == event_id:
+
+                if event["status"] != "pending":
+                    raise ValueError("Cet événement a déjà été traité.")
+
+                event["status"] = status
+                return event
+
+        return None
