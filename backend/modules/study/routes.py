@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from modules.study.service import StudyService
@@ -92,3 +92,31 @@ def summarize_course(course_id: str):
         raise HTTPException(status_code=404, detail="Cours introuvable.")
 
     return {"course_id": course_id, "summary": summary}
+
+
+@router.post("/courses/{course_id}/pdf")
+def upload_course_pdf(course_id: str, background_tasks: BackgroundTasks, pdf_file: UploadFile = File(...)):
+    pdf_bytes = pdf_file.file.read()
+
+    try:
+        pdf_groups = study_service.prepare_pdf(
+            course_id=course_id,
+            pdf_file_name=pdf_file.filename,
+            pdf_bytes=pdf_bytes,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    background_tasks.add_task(study_service.process_pdf, course_id=course_id, pdf_groups=pdf_groups)
+
+    return {"course_id": course_id, "status": "processing", "group_count": len(pdf_groups)}
+
+
+@router.get("/courses/{course_id}/pdf")
+def get_course_pdf(course_id: str):
+    pdf = study_service.get_pdf_status(course_id=course_id)
+
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="Aucun PDF pour ce cours.")
+
+    return pdf

@@ -1,5 +1,7 @@
 from modules.module6_llm import LlmClient
 
+from pypdf import PdfReader
+import io
 import os
 
 
@@ -15,8 +17,18 @@ class StudyService:
         self.course_summary_context = LlmClient.read_file(
             file_path=os.path.join(os.path.dirname(__file__), "context_course_summary.txt")
         )
+        self.pdf_summary_context = LlmClient.read_file(
+            file_path=os.path.join(os.path.dirname(__file__), "context_pdf_summary.txt")
+        )
+        self.global_summary_context = LlmClient.read_file(
+            file_path=os.path.join(os.path.dirname(__file__), "context_global_summary.txt")
+        )
         self.max_audio_size = 25 * 1024 * 1024
         self.max_summaries_size = 20000
+        self.max_pdf_bytes = 20 * 1024 * 1024
+        self.max_pdf_chars = 60000
+        self.pdf_group_size = 5000
+        self.max_notes_size = 10000
         self.default_prompt = "Transcription d'un cours en français."
         self.courses = {}
 
@@ -27,6 +39,21 @@ class StudyService:
 
     def ask_llm(self, text_interaction):
         return self.llm_client.ask(context=self.context, text_interaction=text_interaction)
+
+
+    def get_or_create_course(self, course_id):
+
+        if course_id not in self.courses:
+            self.courses[course_id] = {
+                "transcript": "",
+                "chunk_count": 0,
+                "chunks": [],
+                "chunk_summaries": [],
+                "summary": None,
+                "pdf": None,
+            }
+
+        return self.courses[course_id]
 
 
     def check_audio(self, audio_bytes, user_consent):
@@ -59,15 +86,7 @@ class StudyService:
 
         self.check_audio(audio_bytes=audio_bytes, user_consent=user_consent)
 
-        if course_id not in self.courses:
-            self.courses[course_id] = {
-                "transcript": "",
-                "chunk_count": 0,
-                "chunks": [],
-                "chunk_summaries": [],
-            }
-
-        course = self.courses[course_id]
+        course = self.get_or_create_course(course_id=course_id)
 
         expected_index = course["chunk_count"] + 1
         if chunk_index != expected_index:
@@ -117,7 +136,7 @@ class StudyService:
         return self.courses[course_id]
 
 
-    def summarize_course(self, course_id):
+    def summarize_course(self, course_id, paced=False):
 
         if course_id not in self.courses:
             return None
@@ -147,9 +166,141 @@ class StudyService:
         if len(all_summaries) > self.max_summaries_size:
             raise ValueError("Ce cours est trop long pour un résumé en une fois.")
 
-        summary = self.llm_client.ask(
+        ask = self.llm_client.ask_paced if paced else self.llm_client.ask
+
+        summary = ask(
             context=self.course_summary_context,
             text_interaction=all_summaries,
         )
 
+        course["summary"] = summary
+
         return summary
+
+
+    def extract_pdf_text(self, pdf_bytes):
+
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            pages = [page.extract_text() or "" for page in reader.pages]
+        except Exception:
+            raise ValueError("Impossible de lire ce PDF (fichier abîmé ou protégé).")
+
+        text = ""
+
+        for page_number, page_text in enumerate(pages, start=1):
+            if page_text.strip():
+                text += f"[Page {page_number}]\n{page_text.strip()}\n\n"
+
+        if len(text) < 200:
+            raise ValueError("Ce PDF ne contient presque pas de texte (PDF scanné ?).")
+
+        if len(text) > self.max_pdf_chars:
+            raise ValueError("Ce PDF est trop long : il dépasse environ 60 000 caractères.")
+
+        return text
+
+
+    def split_pdf_text(self, text):
+
+        pdf_groups = []
+        current_group = ""
+
+        for line in text.split("\n"):
+            for start in range(0, max(len(line), 1), self.pdf_group_size):
+                piece = line[start:start + self.pdf_group_size]
+
+                if current_group and len(current_group) + len(piece) + 1 > self.pdf_group_size:
+                    pdf_groups.append(current_group)
+                    current_group = ""
+
+                current_group += piece + "\n"
+
+        if current_group.strip():
+            pdf_groups.append(current_group)
+
+        return pdf_groups
+
+
+    def prepare_pdf(self, course_id, pdf_file_name, pdf_bytes):
+
+        if len(pdf_bytes) == 0:
+            raise ValueError("Le fichier PDF est vide.")
+
+        if len(pdf_bytes) > self.max_pdf_bytes:
+            raise ValueError("Le PDF dépasse 20 Mo.")
+
+        course = self.get_or_create_course(course_id=course_id)
+
+        if course["pdf"] is not None and course["pdf"]["status"] == "processing":
+            raise ValueError("Un PDF est déjà en cours de traitement pour ce cours.")
+
+        text = self.extract_pdf_text(pdf_bytes=pdf_bytes)
+        pdf_groups = self.split_pdf_text(text=text)
+
+        course["pdf"] = {
+            "file_name": pdf_file_name,
+            "status": "processing",
+            "done_groups": 0,
+            "group_count": len(pdf_groups),
+            "summary": None,
+            "error": None,
+        }
+
+        return pdf_groups
+
+
+    def process_pdf(self, course_id, pdf_groups):
+
+        course = self.courses[course_id]
+        pdf = course["pdf"]
+
+        try:
+            notes = []
+
+            for index, pdf_group in enumerate(pdf_groups):
+                note = self.llm_client.ask_paced(
+                    context=self.pdf_summary_context,
+                    text_interaction=pdf_group,
+                )
+                notes.append(note)
+                pdf["done_groups"] = index + 1
+
+            all_notes = "\n\n".join(notes)
+
+            if len(all_notes) > self.max_notes_size:
+                raise ValueError("Les notes du PDF sont trop longues pour être fusionnées.")
+
+            oral_summary = course["summary"]
+
+            if oral_summary is None and course["chunk_count"] > 0:
+                try:
+                    oral_summary = self.summarize_course(course_id=course_id, paced=True)
+                except ValueError:
+                    oral_summary = None
+
+            if oral_summary is None:
+                oral_summary = "(Aucune explication orale n'est disponible pour ce cours.)"
+
+            text_interaction = (
+                "## NOTES DU PDF\n\n" + all_notes
+                + "\n\n## CE QUE LE PROFESSEUR A DIT À L'ORAL\n\n" + oral_summary
+            )
+
+            pdf["summary"] = self.llm_client.ask_paced(
+                context=self.global_summary_context,
+                text_interaction=text_interaction,
+            )
+            pdf["status"] = "done"
+
+        except Exception as error:
+            pdf["status"] = "error"
+            pdf["error"] = str(error)
+
+
+    def get_pdf_status(self, course_id):
+
+        if course_id not in self.courses:
+            return None
+
+        return self.courses[course_id]["pdf"]

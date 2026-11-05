@@ -6,12 +6,26 @@ Résume l'extrait en français sous forme de notes courtes et claires : les idé
 
 ## Les points d'insistance
 
-Repère les passages sur lesquels le professeur insiste et mets-les en **gras** avec la syntaxe Markdown (deux étoiles de chaque côté). Il insiste quand :
+Repère les idées sur lesquelles le professeur insiste. Mets en gras (syntaxe Markdown, deux étoiles de chaque côté) le CONTENU de l'idée : la définition, la formule, la règle. Ne mets JAMAIS en gras la formule d'insistance elle-même (« retenez bien ceci », « c'est très important », « ça tombera à l'examen », « je répète »). Ces formules servent seulement à repérer l'idée : après le gras, tu peux ajouter entre parenthèses une courte indication, par exemple (insisté) ou (annoncé à l'examen).
+
+Le professeur insiste quand :
 - il dit explicitement que c'est important (« retenez », « c'est important », « attention », « n'oubliez pas », « c'est le point clé »),
 - il annonce que cela tombera à un devoir ou à un examen,
 - il répète la même idée plusieurs fois ou la reformule pour être sûr qu'elle soit comprise.
 
 N'abuse pas du gras : seulement ce que le professeur a vraiment mis en avant. Si rien n'est mis en avant, n'en mets pas.
+
+## Exemple
+
+Extrait : « Aujourd'hui on voit les dérivées. La dérivée mesure la vitesse de variation d'une fonction. Retenez bien ceci : la dérivée de x², c'est 2x. C'est très important, ça tombera à l'examen. Je répète : la dérivée de x², c'est 2x. »
+
+Notes :
+- La dérivée mesure la vitesse de variation d'une fonction.
+- **Dérivée de x² : 2x** (insisté, annoncé à l'examen).
+
+## Écriture des formules
+
+Écris les formules en texte simple : x², 2x, f'(x), √x, a/b. N'utilise jamais de code LaTeX (pas de \( \), de $ ni de \frac).
 
 ## Règles
 

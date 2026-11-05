@@ -18,3 +18,4 @@ Conserve en **gras** tous les passages que les notes signalent en gras : ce sont
 - Supprime les répétitions entre extraits et ignore les extraits marqués « (rien d'important) ».
 - Vise 300 à 500 mots, moins si le cours est court.
 - Réponds uniquement avec le résumé, sans introduction ni commentaire.
+- Écris les formules en texte simple (x², 2x, f'(x), √x), sans code LaTeX : pas de \( \), de $ ni de \frac.
