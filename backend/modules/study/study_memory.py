@@ -19,6 +19,13 @@ class StudyMemory:
             "data TEXT NOT NULL, "
             "updated_at TEXT NOT NULL)"
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS messages ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "role TEXT NOT NULL, "
+            "content TEXT NOT NULL, "
+            "created_at TEXT NOT NULL)"
+        )
         connection.commit()
         connection.close()
 
@@ -44,5 +51,33 @@ class StudyMemory:
     def delete_course(self, course_id):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DELETE FROM courses WHERE course_id = ?", (course_id,))
+        connection.commit()
+        connection.close()
+
+
+    def add_message(self, role, content):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute(
+            "INSERT INTO messages (role, content, created_at) VALUES (?, ?, ?)",
+            (role, content, datetime.now().isoformat(timespec="seconds")),
+        )
+        connection.commit()
+        connection.close()
+
+
+    def get_recent_messages(self, limit):
+        connection = sqlite3.connect(self.database_path)
+        rows = connection.execute(
+            "SELECT role, content, created_at FROM messages ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        connection.close()
+
+        return [{"role": role, "content": content, "created_at": created_at} for role, content, created_at in reversed(rows)]
+
+
+    def clear_messages(self):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DELETE FROM messages")
         connection.commit()
         connection.close()

@@ -75,6 +75,22 @@ class LlmClient:
         return response
 
 
+    def ask_with_history(self, context, history, text_interaction):
+
+        messages = [{"role": "system", "content": context}] + history + [{"role": "user", "content": text_interaction}]
+
+        response = self.get_groq_client().chat.completions.create(
+            messages=messages,
+            model="openai/gpt-oss-120b",
+            include_reasoning=False,
+        ).choices[0].message.content
+
+        history_text = "".join(message["content"] for message in history)
+        self.record_tokens(self.estimate_tokens(context + history_text + text_interaction + response))
+
+        return response
+
+
     def ask_paced(self, context, text_interaction):
 
         needed_tokens = self.estimate_tokens(context + text_interaction) + 1500

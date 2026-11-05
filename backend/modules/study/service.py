@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import unicodedata
 import uuid
 
 
@@ -47,6 +48,28 @@ class StudyService:
             "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
             "août", "septembre", "octobre", "novembre", "décembre",
         ]
+        self.stop_words = [
+            "les", "des", "une", "est", "que", "qui", "quoi", "dans", "pour", "avec", "sur", "par",
+            "pas", "plus", "mais", "nous", "vous", "tout", "tous", "cette", "ces", "comme", "etait",
+            "avait", "avais", "aussi", "fait", "faire", "peux", "peut", "dit", "dire", "parle",
+            "parler", "cours", "prof", "professeur", "quel", "quelle", "quels", "quelles", "sont",
+            "son", "ses", "ton", "tes", "mon", "mes", "aux", "ete", "etre", "avoir", "ainsi",
+            "alors", "donc", "puis", "chose", "rappelle", "explique", "dis", "moi", "toi",
+            "donne", "donner", "exemple", "exemples", "encore", "autre", "autres",
+        ]
+        self.answer_reminder = (
+            "## Rappel avant de répondre\n"
+            "- Réponds en 150 mots maximum, sauf si l'étudiant demande plus de détails.\n"
+            "- Écris les formules en texte simple, par exemple : f'(x) = 2x ou (x+h)^2. "
+            "Aucun code LaTeX : rien qui commence par une barre oblique inverse.\n"
+            "- Si un extrait contient un exemple ou une explication du cours, utilise-le en priorité.\n"
+            "- Si aucun extrait ne répond, dis-le en une phrase, puis donne au plus une courte explication générale. "
+            "Ne dis jamais ce que le professeur a dit ou insiste à dire si ce n'est pas dans un extrait."
+        )
+        self.history_size = 10
+        self.max_history_chars = 6000
+        self.max_note_results = 3
+        self.passage_size = 800
         self.max_audio_size = 25 * 1024 * 1024
         self.max_summaries_size = 20000
         self.max_pdf_bytes = 20 * 1024 * 1024
@@ -77,7 +100,161 @@ class StudyService:
 
 
     def ask_llm(self, text_interaction):
-        return self.llm_client.ask(context=self.context, text_interaction=text_interaction)
+
+        history = self.get_history_for_prompt()
+
+        previous_question = None
+        for message in reversed(history):
+            if message["role"] == "user":
+                previous_question = message["content"]
+                break
+
+        notes = self.search_notes(question=text_interaction, previous_question=previous_question)
+        context = self.context + "\n\n" + self.format_notes(notes=notes) + "\n\n" + self.answer_reminder
+
+        response = self.llm_client.ask_with_history(
+            context=context,
+            history=history,
+            text_interaction=text_interaction,
+        )
+
+        self.memory.add_message(role="user", content=text_interaction)
+        self.memory.add_message(role="assistant", content=response)
+
+        sources = [note["label"] for note in notes]
+
+        return {"response": response, "sources": sources}
+
+
+    def get_history_for_prompt(self):
+
+        messages = self.memory.get_recent_messages(limit=self.history_size)
+        history = []
+        total_chars = 0
+
+        for message in reversed(messages):
+            total_chars += len(message["content"])
+
+            if total_chars > self.max_history_chars:
+                break
+
+            history.insert(0, {"role": message["role"], "content": message["content"]})
+
+        return history
+
+
+    def get_history(self, limit):
+        return self.memory.get_recent_messages(limit=limit)
+
+
+    def clear_history(self):
+        self.memory.clear_messages()
+
+
+    def normalize_text(self, text):
+        text = unicodedata.normalize("NFD", text.lower())
+        return "".join(char for char in text if unicodedata.category(char) != "Mn")
+
+
+    def get_words(self, text):
+        return re.findall(r"[a-z0-9]{3,}", self.normalize_text(text))
+
+
+    def get_keywords(self, question):
+        return {word[:5] for word in self.get_words(question) if word not in self.stop_words}
+
+
+    def split_passages(self, text):
+
+        pieces = re.split(r"(?<=[.!?])\s+|\n+", text)
+        passages = []
+        current_passage = ""
+
+        for piece in pieces:
+            if not piece.strip():
+                continue
+
+            if current_passage and len(current_passage) + len(piece) + 1 > self.passage_size:
+                passages.append(current_passage)
+                current_passage = ""
+
+            current_passage = (current_passage + " " + piece).strip()
+
+        if current_passage:
+            passages.append(current_passage)
+
+        return passages
+
+
+    def get_course_notes(self, course_id, course):
+
+        notes = []
+
+        for index, chunk_text in enumerate(course["chunks"]):
+            for passage in self.split_passages(text=chunk_text):
+                notes.append({
+                    "label": f"cours {course_id}, ce que le prof a dit (morceau {index + 1})",
+                    "content": passage,
+                })
+
+        if course["summary"]:
+            for passage in self.split_passages(text=course["summary"]):
+                notes.append({"label": f"cours {course_id}, résumé du cours", "content": passage})
+
+        if course["pdf"] is not None and course["pdf"]["summary"]:
+            for passage in self.split_passages(text=course["pdf"]["summary"]):
+                notes.append({"label": f"cours {course_id}, résumé du PDF fusionné", "content": passage})
+
+        return notes
+
+
+    def search_notes(self, question, previous_question=None):
+
+        keywords = self.get_keywords(question=question)
+
+        if not keywords and previous_question:
+            keywords = self.get_keywords(question=previous_question)
+
+        return self.find_notes(keywords=keywords)
+
+
+    def find_notes(self, keywords):
+
+        if not keywords:
+            return []
+
+        needed_matches = 1 if len(keywords) == 1 else 2
+        scored_notes = []
+
+        for course_id, course in self.courses.items():
+            for note in self.get_course_notes(course_id=course_id, course=course):
+                note_stems = [word[:5] for word in self.get_words(note["content"])]
+                matches = [stem for stem in note_stems if stem in keywords]
+
+                if len(set(matches)) < needed_matches:
+                    continue
+
+                score = len(set(matches)) * 5 + len(matches)
+                scored_notes.append((score, note))
+
+        scored_notes.sort(key=lambda scored_note: scored_note[0], reverse=True)
+
+        return [note for score, note in scored_notes[:self.max_note_results]]
+
+
+    def format_notes(self, notes):
+
+        if not notes:
+            return "## Extraits de tes cours\n\n(Aucun extrait trouvé pour cette question.)"
+
+        lines = ["## Extraits de tes cours", ""]
+
+        for note in notes:
+            lines.append(f"[{note['label']}]")
+            lines.append(note["content"][:1200])
+            lines.append("")
+
+        return "\n".join(lines)
 
 
     def save_course(self, course_id):

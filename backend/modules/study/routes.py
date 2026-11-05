@@ -27,8 +27,24 @@ def ping():
 
 @router.post("/ask")
 def ask(request: AskRequest):
-    response = study_service.ask_llm(text_interaction=request.text_interaction)
-    return {"response": response}
+
+    try:
+        result = study_service.ask_llm(text_interaction=request.text_interaction)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service est indisponible, réessaie dans une minute.")
+
+    return result
+
+
+@router.get("/history")
+def get_history(limit: int = 20):
+    return {"messages": study_service.get_history(limit=limit)}
+
+
+@router.delete("/history")
+def clear_history():
+    study_service.clear_history()
+    return {"cleared": True}
 
 
 @router.post("/transcribe")
@@ -169,16 +185,6 @@ def get_course_events(course_id: str):
 
 @router.patch("/courses/{course_id}/events/{event_id}")
 def decide_course_event(course_id: str, event_id: str, decision: EventDecision):
-
-    try:
-        event = study_service.decide_event(course_id=course_id, event_id=event_id, status=decision.status)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-
-    if event is None:
-        raise HTTPException(status_code=404, detail="Cours ou événement introuvable.")
-
-    return event
 
     try:
         event = study_service.decide_event(course_id=course_id, event_id=event_id, status=decision.status)
