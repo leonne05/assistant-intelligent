@@ -1,4 +1,5 @@
 from modules.module6_llm import LlmClient
+from modules.study.study_memory import StudyMemory
 
 from pypdf import PdfReader
 from datetime import date, datetime, timedelta
@@ -10,7 +11,7 @@ import uuid
 
 
 class StudyService:
-    def __init__(self):
+    def __init__(self, database_path=None):
         self.llm_client = LlmClient()
         self.context = LlmClient.read_file(
             file_path=os.path.join(os.path.dirname(__file__), "context_study.txt")
@@ -53,7 +54,22 @@ class StudyService:
         self.pdf_group_size = 5000
         self.max_notes_size = 10000
         self.default_prompt = "Transcription d'un cours en français."
-        self.courses = {}
+
+        if database_path is None:
+            database_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "data", "study.db")
+            )
+
+        self.memory = StudyMemory(database_path=database_path)
+        self.courses = self.memory.load_all_courses()
+
+        for course_id, course in self.courses.items():
+            pdf = course["pdf"]
+
+            if pdf is not None and pdf["status"] == "processing":
+                pdf["status"] = "error"
+                pdf["error"] = "Traitement interrompu par un redémarrage du serveur : renvoie le PDF."
+                self.save_course(course_id=course_id)
 
 
     def get_status(self):
@@ -62,6 +78,37 @@ class StudyService:
 
     def ask_llm(self, text_interaction):
         return self.llm_client.ask(context=self.context, text_interaction=text_interaction)
+
+
+    def save_course(self, course_id):
+
+        if course_id in self.courses:
+            self.memory.save_course(course_id=course_id, course=self.courses[course_id])
+
+
+    def delete_course(self, course_id):
+
+        if course_id not in self.courses:
+            return False
+
+        del self.courses[course_id]
+        self.memory.delete_course(course_id=course_id)
+
+        return True
+
+
+    def list_courses(self):
+
+        return [
+            {
+                "course_id": course_id,
+                "chunk_count": course["chunk_count"],
+                "has_summary": course["summary"] is not None,
+                "has_pdf": course["pdf"] is not None,
+                "pending_events": sum(1 for event in course["events"] if event["status"] == "pending"),
+            }
+            for course_id, course in self.courses.items()
+        ]
 
 
     def get_or_create_course(self, course_id):
@@ -140,6 +187,8 @@ class StudyService:
         course["chunk_summaries"].append(chunk_summary)
         course["chunk_count"] = chunk_index
 
+        self.save_course(course_id=course_id)
+
         return {
             "course_id": course_id,
             "chunk_index": chunk_index,
@@ -204,6 +253,8 @@ class StudyService:
         )
 
         course["summary"] = summary
+
+        self.save_course(course_id=course_id)
 
         return summary
 
@@ -277,6 +328,8 @@ class StudyService:
             "error": None,
         }
 
+        self.save_course(course_id=course_id)
+
         return pdf_groups
 
 
@@ -295,6 +348,7 @@ class StudyService:
                 )
                 notes.append(note)
                 pdf["done_groups"] = index + 1
+                self.save_course(course_id=course_id)
 
             all_notes = "\n\n".join(notes)
 
@@ -322,10 +376,12 @@ class StudyService:
                 text_interaction=text_interaction,
             )
             pdf["status"] = "done"
+            self.save_course(course_id=course_id)
 
         except Exception as error:
             pdf["status"] = "error"
             pdf["error"] = str(error)
+            self.save_course(course_id=course_id)
 
 
     def get_pdf_status(self, course_id):
@@ -459,6 +515,8 @@ class StudyService:
                 paced=True,
             )
 
+        self.save_course(course_id=course_id)
+
         return new_events
 
 
@@ -482,6 +540,7 @@ class StudyService:
                     raise ValueError("Cet événement a déjà été traité.")
 
                 event["status"] = status
+                self.save_course(course_id=course_id)
                 return event
 
         return None

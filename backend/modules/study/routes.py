@@ -74,6 +74,21 @@ def transcribe_chunk(
     return result
 
 
+@router.get("/courses")
+def list_courses():
+    return {"courses": study_service.list_courses()}
+
+
+@router.delete("/courses/{course_id}")
+def delete_course(course_id: str):
+    deleted = study_service.delete_course(course_id=course_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "deleted": True}
+
+
 @router.get("/courses/{course_id}/transcript")
 def get_course_transcript(course_id: str):
     course = study_service.get_course_transcript(course_id=course_id)
@@ -154,6 +169,16 @@ def get_course_events(course_id: str):
 
 @router.patch("/courses/{course_id}/events/{event_id}")
 def decide_course_event(course_id: str, event_id: str, decision: EventDecision):
+
+    try:
+        event = study_service.decide_event(course_id=course_id, event_id=event_id, status=decision.status)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if event is None:
+        raise HTTPException(status_code=404, detail="Cours ou événement introuvable.")
+
+    return event
 
     try:
         event = study_service.decide_event(course_id=course_id, event_id=event_id, status=decision.status)
