@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Literal
 
 from modules.study.service import StudyService
@@ -17,6 +17,11 @@ class AskRequest(BaseModel):
 
 class EventDecision(BaseModel):
     status: Literal["approved", "rejected"]
+
+
+
+class QuizRequest(BaseModel):
+    question_count: int = Field(default=5, ge=1, le=10)
 
 
 
@@ -195,3 +200,29 @@ def decide_course_event(course_id: str, event_id: str, decision: EventDecision):
         raise HTTPException(status_code=404, detail="Cours ou événement introuvable.")
 
     return event
+
+
+@router.post("/courses/{course_id}/quiz")
+def create_quiz(course_id: str, request: QuizRequest):
+
+    try:
+        quiz = study_service.generate_quiz(course_id=course_id, question_count=request.question_count)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service est indisponible ou le quiz est invalide, réessaie dans une minute.")
+
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return quiz
+
+
+@router.get("/quizzes/{quiz_id}")
+def get_quiz(quiz_id: str):
+    quiz = study_service.get_quiz(quiz_id=quiz_id)
+
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz introuvable.")
+
+    return quiz

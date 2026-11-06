@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 import io
 import json
 import os
+import random
 import re
 import unicodedata
 import uuid
@@ -31,6 +32,9 @@ class StudyService:
         )
         self.events_context = LlmClient.read_file(
             file_path=os.path.join(os.path.dirname(__file__), "context_events.txt")
+        )
+        self.quiz_context = LlmClient.read_file(
+            file_path=os.path.join(os.path.dirname(__file__), "context_quiz.txt")
         )
         self.event_words = [
             "devoir", "examen", "partiel", "contrôle", "controle", "interro", "rendu", "rendre",
@@ -70,6 +74,8 @@ class StudyService:
         self.max_history_chars = 6000
         self.max_note_results = 3
         self.passage_size = 800
+        self.max_quiz_chars = 9000
+        self.min_quiz_chars = 200
         self.max_audio_size = 25 * 1024 * 1024
         self.max_summaries_size = 20000
         self.max_pdf_bytes = 20 * 1024 * 1024
@@ -270,6 +276,7 @@ class StudyService:
 
         del self.courses[course_id]
         self.memory.delete_course(course_id=course_id)
+        self.memory.delete_quizzes(course_id=course_id)
 
         return True
 
@@ -721,3 +728,118 @@ class StudyService:
                 return event
 
         return None
+
+
+    def get_quiz_material(self, course):
+
+        if course["pdf"] is not None and course["pdf"]["summary"]:
+            material = course["pdf"]["summary"]
+        elif course["summary"]:
+            material = course["summary"]
+        else:
+            chunk_summaries = [summary for summary in course["chunk_summaries"] if summary]
+            material = "\n\n".join(chunk_summaries) if chunk_summaries else course["transcript"]
+
+        return material[:self.max_quiz_chars]
+
+
+    def parse_quiz(self, answer):
+
+        start = answer.find("[")
+        end = answer.rfind("]")
+
+        if start == -1 or end == -1:
+            return []
+
+        try:
+            raw_questions = json.loads(answer[start:end + 1])
+        except ValueError:
+            return []
+
+        questions = []
+
+        for raw_question in raw_questions:
+            if not isinstance(raw_question, dict):
+                continue
+
+            question_text = raw_question.get("question")
+            choices = raw_question.get("choices")
+            answer_index = raw_question.get("answer")
+
+            if not isinstance(question_text, str) or not question_text.strip():
+                continue
+
+            if not isinstance(choices, list) or len(choices) != 4 or not all(isinstance(choice, str) and choice.strip() for choice in choices):
+                continue
+
+            if len(set(choice.strip().lower() for choice in choices)) != 4:
+                continue
+
+            if not isinstance(answer_index, int) or isinstance(answer_index, bool) or not 0 <= answer_index <= 3:
+                continue
+
+            correct_choice = choices[answer_index]
+            shuffled_choices = list(choices)
+            random.shuffle(shuffled_choices)
+
+            questions.append({
+                "question": question_text.strip(),
+                "choices": shuffled_choices,
+                "answer": shuffled_choices.index(correct_choice),
+                "explanation": str(raw_question.get("explanation") or "")[:400],
+                "topic": str(raw_question.get("topic") or "général")[:60],
+            })
+
+        return questions
+
+
+    def generate_quiz(self, course_id, question_count):
+
+        if course_id not in self.courses:
+            return None
+
+        course = self.courses[course_id]
+        material = self.get_quiz_material(course=course)
+
+        if len(material.strip()) < self.min_quiz_chars:
+            raise ValueError("Ce cours n'a pas encore assez de contenu pour faire un quiz.")
+
+        answer = self.llm_client.ask_paced(
+            context=self.quiz_context,
+            text_interaction=f"Nombre de questions demandé : {question_count}\n\nContenu du cours :\n{material}",
+        )
+
+        questions = self.parse_quiz(answer=answer)[:question_count]
+
+        if not questions:
+            raise RuntimeError("Le quiz généré est inutilisable, réessaie.")
+
+        quiz_id = uuid.uuid4().hex[:8]
+        quiz = {"quiz_id": quiz_id, "course_id": course_id, "questions": questions}
+
+        self.memory.save_quiz(quiz_id=quiz_id, course_id=course_id, quiz=quiz)
+
+        return self.get_public_quiz(quiz=quiz)
+
+
+    def get_public_quiz(self, quiz):
+
+        return {
+            "quiz_id": quiz["quiz_id"],
+            "course_id": quiz["course_id"],
+            "question_count": len(quiz["questions"]),
+            "questions": [
+                {"number": number, "question": question["question"], "choices": question["choices"]}
+                for number, question in enumerate(quiz["questions"], start=1)
+            ],
+        }
+
+
+    def get_quiz(self, quiz_id):
+
+        quiz = self.memory.load_quiz(quiz_id=quiz_id)
+
+        if quiz is None:
+            return None
+
+        return self.get_public_quiz(quiz=quiz)

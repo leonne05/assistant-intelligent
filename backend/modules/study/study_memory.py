@@ -26,6 +26,13 @@ class StudyMemory:
             "content TEXT NOT NULL, "
             "created_at TEXT NOT NULL)"
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS quizzes ("
+            "quiz_id TEXT PRIMARY KEY, "
+            "course_id TEXT NOT NULL, "
+            "data TEXT NOT NULL, "
+            "created_at TEXT NOT NULL)"
+        )
         connection.commit()
         connection.close()
 
@@ -79,5 +86,33 @@ class StudyMemory:
     def clear_messages(self):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DELETE FROM messages")
+        connection.commit()
+        connection.close()
+
+
+    def save_quiz(self, quiz_id, course_id, quiz):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute(
+            "INSERT OR REPLACE INTO quizzes (quiz_id, course_id, data, created_at) VALUES (?, ?, ?, ?)",
+            (quiz_id, course_id, json.dumps(quiz, ensure_ascii=False), datetime.now().isoformat(timespec="seconds")),
+        )
+        connection.commit()
+        connection.close()
+
+
+    def load_quiz(self, quiz_id):
+        connection = sqlite3.connect(self.database_path)
+        row = connection.execute("SELECT data FROM quizzes WHERE quiz_id = ?", (quiz_id,)).fetchone()
+        connection.close()
+
+        if row is None:
+            return None
+
+        return json.loads(row[0])
+
+
+    def delete_quizzes(self, course_id):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DELETE FROM quizzes WHERE course_id = ?", (course_id,))
         connection.commit()
         connection.close()
