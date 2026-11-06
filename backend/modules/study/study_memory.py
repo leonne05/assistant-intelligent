@@ -33,6 +33,15 @@ class StudyMemory:
             "data TEXT NOT NULL, "
             "created_at TEXT NOT NULL)"
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS attempts ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "quiz_id TEXT NOT NULL, "
+            "course_id TEXT NOT NULL, "
+            "topic TEXT NOT NULL, "
+            "correct INTEGER NOT NULL, "
+            "answered_at TEXT NOT NULL)"
+        )
         connection.commit()
         connection.close()
 
@@ -114,5 +123,48 @@ class StudyMemory:
     def delete_quizzes(self, course_id):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DELETE FROM quizzes WHERE course_id = ?", (course_id,))
+        connection.commit()
+        connection.close()
+
+
+    def save_attempts(self, quiz_id, course_id, results):
+        answered_at = datetime.now().isoformat(timespec="seconds")
+        connection = sqlite3.connect(self.database_path)
+        connection.executemany(
+            "INSERT INTO attempts (quiz_id, course_id, topic, correct, answered_at) VALUES (?, ?, ?, ?, ?)",
+            [(quiz_id, course_id, topic, 1 if correct else 0, answered_at) for topic, correct in results],
+        )
+        connection.commit()
+        connection.close()
+
+
+    def get_attempts(self, course_id=None):
+        connection = sqlite3.connect(self.database_path)
+
+        if not course_id:
+            rows = connection.execute(
+                "SELECT course_id, topic, correct, answered_at FROM attempts ORDER BY id"
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT course_id, topic, correct, answered_at FROM attempts WHERE course_id = ? ORDER BY id",
+                (course_id,),
+            ).fetchall()
+
+        connection.close()
+
+        return rows
+
+
+    def delete_attempts(self, course_id):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DELETE FROM attempts WHERE course_id = ?", (course_id,))
+        connection.commit()
+        connection.close()
+
+
+    def clear_attempts(self):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DELETE FROM attempts")
         connection.commit()
         connection.close()

@@ -74,6 +74,8 @@ class StudyService:
         self.max_history_chars = 6000
         self.max_note_results = 3
         self.passage_size = 800
+        self.weak_rate = 0.5
+        self.strong_rate = 0.8
         self.max_quiz_chars = 9000
         self.min_quiz_chars = 200
         self.max_audio_size = 25 * 1024 * 1024
@@ -277,6 +279,7 @@ class StudyService:
         del self.courses[course_id]
         self.memory.delete_course(course_id=course_id)
         self.memory.delete_quizzes(course_id=course_id)
+        self.memory.delete_attempts(course_id=course_id)
 
         return True
 
@@ -843,3 +846,109 @@ class StudyService:
             return None
 
         return self.get_public_quiz(quiz=quiz)
+
+
+    def correct_quiz(self, quiz_id, answers):
+
+        quiz = self.memory.load_quiz(quiz_id=quiz_id)
+
+        if quiz is None:
+            return None
+
+        if quiz.get("corrected"):
+            raise ValueError("Ce quiz a déjà été corrigé : génère-en un nouveau pour t'entraîner encore.")
+
+        questions = quiz["questions"]
+
+        if len(answers) != len(questions):
+            raise ValueError(
+                f"Ce quiz a {len(questions)} questions : envoie {len(questions)} réponses (null pour une question sautée)."
+            )
+
+        for answer in answers:
+            if answer is not None and (isinstance(answer, bool) or not 0 <= answer <= 3):
+                raise ValueError("Chaque réponse doit être un nombre de 0 à 3 (position du choix), ou null.")
+
+        results = []
+        attempts = []
+
+        for number, (question, answer) in enumerate(zip(questions, answers), start=1):
+            is_correct = answer == question["answer"]
+            topic = question["topic"].strip().lower() or "général"
+
+            results.append({
+                "number": number,
+                "question": question["question"],
+                "your_answer": question["choices"][answer] if answer is not None else None,
+                "correct_answer": question["choices"][question["answer"]],
+                "is_correct": is_correct,
+                "explanation": question["explanation"],
+                "topic": topic,
+            })
+            attempts.append((topic, is_correct))
+
+        self.memory.save_attempts(quiz_id=quiz_id, course_id=quiz["course_id"], results=attempts)
+
+        quiz["corrected"] = True
+        self.memory.save_quiz(quiz_id=quiz_id, course_id=quiz["course_id"], quiz=quiz)
+
+        score = sum(1 for result in results if result["is_correct"])
+        to_review = []
+
+        for result in results:
+            if not result["is_correct"] and result["topic"] not in to_review:
+                to_review.append(result["topic"])
+
+        return {
+            "quiz_id": quiz_id,
+            "course_id": quiz["course_id"],
+            "score": score,
+            "total": len(results),
+            "score_percent": round(score * 100 / len(results)),
+            "to_review": to_review,
+            "results": results,
+        }
+
+
+    def get_gaps(self, course_id=None):
+
+        stats = {}
+
+        for row_course_id, topic, correct, answered_at in self.memory.get_attempts(course_id=course_id):
+            key = (row_course_id, topic)
+
+            if key not in stats:
+                stats[key] = {
+                    "course_id": row_course_id,
+                    "topic": topic,
+                    "attempts": 0,
+                    "correct": 0,
+                    "last_answered": answered_at,
+                }
+
+            stats[key]["attempts"] += 1
+            stats[key]["correct"] += correct
+            stats[key]["last_answered"] = max(stats[key]["last_answered"], answered_at)
+
+        gaps = []
+
+        for stat in stats.values():
+            rate = stat["correct"] / stat["attempts"]
+            stat["success_percent"] = round(rate * 100)
+
+            if rate < self.weak_rate:
+                stat["level"] = "a_retravailler"
+            elif rate < self.strong_rate:
+                stat["level"] = "moyen"
+            else:
+                stat["level"] = "acquis"
+
+            gaps.append(stat)
+
+        gaps.sort(key=lambda gap: (gap["success_percent"], -gap["attempts"]))
+
+        return gaps
+
+
+    def clear_gaps(self):
+        self.memory.clear_attempts()

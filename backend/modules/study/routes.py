@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import List, Literal, Optional
 
 from modules.study.service import StudyService
 
@@ -22,6 +22,11 @@ class EventDecision(BaseModel):
 
 class QuizRequest(BaseModel):
     question_count: int = Field(default=5, ge=1, le=10)
+
+
+
+class QuizAnswers(BaseModel):
+    answers: List[Optional[int]]
 
 
 
@@ -226,3 +231,28 @@ def get_quiz(quiz_id: str):
         raise HTTPException(status_code=404, detail="Quiz introuvable.")
 
     return quiz
+
+
+@router.post("/quizzes/{quiz_id}/answers")
+def correct_quiz(quiz_id: str, request: QuizAnswers):
+
+    try:
+        correction = study_service.correct_quiz(quiz_id=quiz_id, answers=request.answers)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if correction is None:
+        raise HTTPException(status_code=404, detail="Quiz introuvable.")
+
+    return correction
+
+
+@router.get("/gaps")
+def get_gaps(course_id: Optional[str] = None):
+    return {"gaps": study_service.get_gaps(course_id=course_id)}
+
+
+@router.delete("/gaps")
+def clear_gaps():
+    study_service.clear_gaps()
+    return {"cleared": True}
