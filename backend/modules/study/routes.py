@@ -1,3 +1,4 @@
+from datetime import date
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
@@ -22,6 +23,7 @@ class EventDecision(BaseModel):
 
 class QuizRequest(BaseModel):
     question_count: int = Field(default=5, ge=1, le=10)
+    topics: Optional[List[str]] = None
 
 
 
@@ -211,7 +213,11 @@ def decide_course_event(course_id: str, event_id: str, decision: EventDecision):
 def create_quiz(course_id: str, request: QuizRequest):
 
     try:
-        quiz = study_service.generate_quiz(course_id=course_id, question_count=request.question_count)
+        quiz = study_service.generate_quiz(
+            course_id=course_id,
+            question_count=request.question_count,
+            topics=request.topics,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception:
@@ -256,3 +262,14 @@ def get_gaps(course_id: Optional[str] = None):
 def clear_gaps():
     study_service.clear_gaps()
     return {"cleared": True}
+
+
+@router.get("/revision")
+def get_revision_plan(course_id: Optional[str] = None, on_date: Optional[str] = None):
+
+    try:
+        plan_date = date.fromisoformat(on_date) if on_date else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="La date doit être au format AAAA-MM-JJ, par exemple 2026-11-10.")
+
+    return study_service.get_revision_plan(course_id=course_id, on_date=plan_date)

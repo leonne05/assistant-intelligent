@@ -74,6 +74,7 @@ class StudyService:
         self.max_history_chars = 6000
         self.max_note_results = 3
         self.passage_size = 800
+        self.review_intervals = [1, 3, 7, 15, 30]
         self.weak_rate = 0.5
         self.strong_rate = 0.8
         self.max_quiz_chars = 9000
@@ -796,7 +797,7 @@ class StudyService:
         return questions
 
 
-    def generate_quiz(self, course_id, question_count):
+    def generate_quiz(self, course_id, question_count, topics=None):
 
         if course_id not in self.courses:
             return None
@@ -807,9 +808,19 @@ class StudyService:
         if len(material.strip()) < self.min_quiz_chars:
             raise ValueError("Ce cours n'a pas encore assez de contenu pour faire un quiz.")
 
+        text_interaction = f"Nombre de questions demandé : {question_count}\n\n"
+
+        if topics:
+            clean_topics = [topic.strip()[:60] for topic in topics if topic.strip()][:5]
+
+            if clean_topics:
+                text_interaction += "Notions à travailler en priorité : " + ", ".join(clean_topics) + "\n\n"
+
+        text_interaction += f"Contenu du cours :\n{material}"
+
         answer = self.llm_client.ask_paced(
             context=self.quiz_context,
-            text_interaction=f"Nombre de questions demandé : {question_count}\n\nContenu du cours :\n{material}",
+            text_interaction=text_interaction,
         )
 
         questions = self.parse_quiz(answer=answer)[:question_count]
@@ -952,3 +963,58 @@ class StudyService:
 
     def clear_gaps(self):
         self.memory.clear_attempts()
+
+
+    def get_revision_plan(self, course_id=None, on_date=None):
+
+        today = on_date or date.today()
+        topics = {}
+
+        for row_course_id, topic, correct, answered_at in self.memory.get_attempts(course_id=course_id):
+            key = (row_course_id, topic)
+
+            if key not in topics:
+                topics[key] = {"course_id": row_course_id, "topic": topic, "attempts": 0, "correct": 0, "sessions": []}
+
+            topics[key]["attempts"] += 1
+            topics[key]["correct"] += correct
+
+            sessions = topics[key]["sessions"]
+
+            if sessions and sessions[-1][0] == answered_at:
+                sessions[-1][1] = sessions[-1][1] and bool(correct)
+            else:
+                sessions.append([answered_at, bool(correct)])
+
+        due = []
+        upcoming = []
+
+        for item in topics.values():
+            streak = 0
+
+            for answered_at, session_correct in item["sessions"]:
+                streak = streak + 1 if session_correct else 0
+
+            last_day = datetime.fromisoformat(item["sessions"][-1][0]).date()
+            interval = self.review_intervals[min(streak, len(self.review_intervals) - 1)]
+            next_review = last_day + timedelta(days=interval)
+
+            entry = {
+                "course_id": item["course_id"],
+                "topic": item["topic"],
+                "streak": streak,
+                "success_percent": round(item["correct"] * 100 / item["attempts"]),
+                "last_answered": last_day.isoformat(),
+                "next_review": next_review.isoformat(),
+                "days_overdue": (today - next_review).days,
+            }
+
+            if next_review <= today:
+                due.append(entry)
+            else:
+                upcoming.append(entry)
+
+        due.sort(key=lambda entry: (-entry["days_overdue"], entry["success_percent"]))
+        upcoming.sort(key=lambda entry: entry["next_review"])
+
+        return {"date": today.isoformat(), "due_count": len(due), "due": due, "upcoming": upcoming}

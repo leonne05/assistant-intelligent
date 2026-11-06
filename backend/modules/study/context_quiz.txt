@@ -11,6 +11,7 @@ Le message contient le nombre de questions demandé, puis le contenu du cours (r
 - Chaque question a exactement 4 choix : une seule bonne réponse, trois mauvaises réponses plausibles mais clairement fausses d'après le cours.
 - Les choix doivent être courts et de longueur comparable. Ne mets pas « toutes les réponses » ni « aucune de ces réponses ».
 - Varie la position de la bonne réponse.
+- Si le message indique des notions à travailler en priorité, pose d'abord des questions sur ces notions (quand le contenu du cours le permet) et complète avec d'autres notions du cours.
 - L'explication tient en une ou deux phrases et dit pourquoi la bonne réponse est juste.
 - Le thème est un court nom de notion (3 mots maximum), par exemple « dérivée d'un produit ».
 - Écris les formules en texte simple : x^2, f'(x) = 2x. Aucun code LaTeX.
