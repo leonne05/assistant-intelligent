@@ -212,13 +212,11 @@ class MeetingsService:
         if chunk_index != expected_index:
             raise ValueError(f"Morceau attendu : {expected_index}, reçu : {chunk_index}.")
 
-        previous_text_end = meeting["transcript"][-400:]
-
         chunk_text = self.llm_client.transcribe(
             audio_file_name=audio_file_name,
             audio_bytes=audio_bytes,
             language="fr",
-            prompt=previous_text_end or self.default_prompt,
+            prompt=self.get_transcription_prompt(meeting=meeting),
         )
 
         try:
@@ -240,6 +238,26 @@ class MeetingsService:
             "chunk_summary": chunk_summary,
             "chunk_count": meeting["chunk_count"],
         }
+
+
+    def get_transcription_prompt(self, meeting):
+
+        hints = []
+        names = [participant["name"] for participant in meeting["participants"]]
+
+        if names:
+            hints.append("Participants : " + ", ".join(names) + ".")
+
+        if meeting["agenda"]:
+            hints.append("Sujets : " + ", ".join(meeting["agenda"]) + ".")
+
+        hints_text = " ".join(hints)[:200]
+        previous_text_end = meeting["transcript"][-250:]
+
+        if previous_text_end:
+            return (hints_text + " " + previous_text_end).strip()
+
+        return (self.default_prompt + " " + hints_text).strip()
 
 
     def summarize_chunk(self, chunk_text):

@@ -13,7 +13,7 @@ Remplis trois listes :
 - "open_points" : les questions restées sans réponse, une phrase courte chacune.
 
 Chaque action est un objet avec exactement ces champs :
-- "who" : le nom de la personne responsable, tel qu'il est dit dans les notes, ou "non précisé" s'il n'est pas dit,
+- "who" : le nom de la personne responsable, ou "non précisé" s'il n'est pas dit. Si le nom dit dans les notes ressemble clairement à un participant (orthographe différente, par exemple « Sarah » pour « Sara »), écris-le exactement comme dans la liste des participants,
 - "what" : ce qu'il faut faire, en une phrase courte,
 - "due" : la date limite au format AAAA-MM-JJ, ou null si elle n'est pas dite.
 
