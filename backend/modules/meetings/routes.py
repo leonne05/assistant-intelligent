@@ -123,3 +123,32 @@ def transcribe_chunk(
         raise HTTPException(status_code=404, detail="Réunion introuvable.")
 
     return result
+
+
+@router.post("/{meeting_id}/report")
+def generate_report(meeting_id: str):
+
+    try:
+        report = meetings_service.generate_report(meeting_id=meeting_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service de compte rendu est indisponible, réessaie dans une minute.")
+
+    if report is None:
+        raise HTTPException(status_code=404, detail="Réunion introuvable.")
+
+    return report
+
+
+@router.get("/{meeting_id}/report")
+def get_report(meeting_id: str):
+    meeting = meetings_service.get_meeting(meeting_id=meeting_id)
+
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="Réunion introuvable.")
+
+    if meeting["report"] is None:
+        raise HTTPException(status_code=404, detail="Cette réunion n'a pas encore de compte rendu.")
+
+    return meeting["report"]
