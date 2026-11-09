@@ -461,6 +461,8 @@ class StudyService:
             if page_text.strip():
                 text += f"[Page {page_number}]\n{page_text.strip()}\n\n"
 
+        text = text.encode("utf-8", errors="ignore").decode("utf-8")
+
         if len(text) < 200:
             raise ValueError("Ce PDF ne contient presque pas de texte (PDF scanné ?).")
 

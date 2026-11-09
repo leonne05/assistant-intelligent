@@ -1,13 +1,18 @@
 from datetime import date
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
+from modules.study.audio_splitter import AudioSplitter
+from modules.study.exporter import StudyExporter
+from modules.study.long_audio import LongAudioProcessor
 from modules.study.service import StudyService
 
 
 router = APIRouter(prefix="/study", tags=["study"])
 study_service = StudyService()
+study_exporter = StudyExporter()
+long_audio_processor = LongAudioProcessor(study_service=study_service, splitter=AudioSplitter())
 
 
 
@@ -80,16 +85,25 @@ def transcribe(audio_file: UploadFile = File(...), user_consent: bool = Form(...
 @router.post("/courses/{course_id}/chunks")
 def transcribe_chunk(
     course_id: str,
-    chunk_index: int = Form(...),
+    chunk_index: str = Form(""),
     audio_file: UploadFile = File(...),
     user_consent: bool = Form(...),
 ):
     audio_bytes = audio_file.file.read()
 
+    if chunk_index.strip() and not chunk_index.strip().isdigit():
+        raise HTTPException(status_code=400, detail="Le numéro du morceau doit être un nombre entier.")
+
+    if chunk_index.strip():
+        chunk_number = int(chunk_index)
+    else:
+        course = study_service.get_course_transcript(course_id=course_id)
+        chunk_number = course["chunk_count"] + 1 if course else 1
+
     try:
         result = study_service.transcribe_chunk(
             course_id=course_id,
-            chunk_index=chunk_index,
+            chunk_index=chunk_number,
             audio_file_name=audio_file.filename,
             audio_bytes=audio_bytes,
             user_consent=user_consent,
@@ -100,6 +114,47 @@ def transcribe_chunk(
         raise HTTPException(status_code=400, detail=str(error))
 
     return result
+
+
+@router.post("/courses/{course_id}/audio")
+def upload_long_audio(
+    course_id: str,
+    background_tasks: BackgroundTasks,
+    audio_file: UploadFile = File(...),
+    user_consent: bool = Form(...),
+):
+    audio_bytes = audio_file.file.read()
+
+    try:
+        long_audio_processor.prepare(
+            course_id=course_id,
+            audio_file_name=audio_file.filename,
+            audio_bytes=audio_bytes,
+            user_consent=user_consent,
+        )
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    background_tasks.add_task(
+        long_audio_processor.process,
+        course_id=course_id,
+        audio_file_name=audio_file.filename,
+        audio_bytes=audio_bytes,
+    )
+
+    return {"course_id": course_id, "status": "splitting"}
+
+
+@router.get("/courses/{course_id}/audio")
+def get_long_audio_status(course_id: str):
+    status = long_audio_processor.get_status(course_id=course_id)
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Aucun audio long en cours pour ce cours.")
+
+    return status
 
 
 @router.get("/courses")
@@ -273,3 +328,31 @@ def get_revision_plan(course_id: Optional[str] = None, on_date: Optional[str] = 
         raise HTTPException(status_code=400, detail="La date doit être au format AAAA-MM-JJ, par exemple 2026-11-10.")
 
     return study_service.get_revision_plan(course_id=course_id, on_date=plan_date)
+
+
+@router.get("/courses/{course_id}/export")
+def export_course(
+    course_id: str,
+    file_format: str = Query("pdf", alias="format"),
+    content: str = "summary",
+):
+    course = study_service.get_course_transcript(course_id=course_id)
+
+    if course is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    try:
+        exported = study_exporter.export(
+            course_id=course_id,
+            course=course,
+            file_format=file_format or "pdf",
+            content=content or "summary",
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return Response(
+        content=exported["data"],
+        media_type=exported["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{exported["file_name"]}"'},
+    )

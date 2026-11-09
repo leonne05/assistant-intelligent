@@ -4,3 +4,6 @@ groq
 python-dotenv
 python-multipart
 pypdf
+reportlab
+python-docx
+imageio-ffmpeg
