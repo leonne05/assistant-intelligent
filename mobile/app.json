@@ -2,6 +2,9 @@
   "expo": {
     "name": "JARVIS",
     "slug": "jarvis",
-    "userInterfaceStyle": "dark"
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "expo-audio"
+    ]
   }
 }
