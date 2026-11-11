@@ -1,3 +1,3 @@
-from .intents import HANDLERS, handle_intent
+﻿from .intents import ACTIONS, handle_intent
 
-__all__ = ["handle_intent", "HANDLERS"]
+__all__ = ["handle_intent", "ACTIONS"]
