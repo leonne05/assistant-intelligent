@@ -25,3 +25,6 @@ ios/Pods/
 EOF
 # backend kept locally, excluded from Git
 /backend/
+
+.env
+__pycache__/
