@@ -16,14 +16,14 @@ export default function MessageBubble({ message }: { message: Message }) {
       style={{
         alignSelf: isUser ? 'flex-end' : 'flex-start',
         maxWidth: '80%',
-        backgroundColor: isUser ? theme.colors.primary : '#F1F1F4',
-        borderRadius: 18,
+        backgroundColor: isUser ? theme.colors.primary : 'rgba(255, 255, 255, 0.08)',
+        borderRadius: 20,
         paddingVertical: 10,
         paddingHorizontal: 14,
         marginVertical: 4,
       }}
     >
-      <Text variant="bodyLarge" style={{ color: isUser ? '#FFFFFF' : theme.colors.onBackground }}>
+      <Text variant="bodyLarge" style={{ color: isUser ? '#FFFFFF' : '#E8E6F3' }}>
         {message.text}
       </Text>
     </View>
