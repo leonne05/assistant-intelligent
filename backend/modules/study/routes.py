@@ -5,14 +5,18 @@ from typing import List, Literal, Optional
 
 from modules.study.audio_splitter import AudioSplitter
 from modules.study.exporter import StudyExporter
+from modules.study.lessons import LessonProcessor
 from modules.study.long_audio import LongAudioProcessor
 from modules.study.service import StudyService
+from modules.study.subjects import SubjectManager
 
 
 router = APIRouter(prefix="/study", tags=["study"])
 study_service = StudyService()
 study_exporter = StudyExporter()
 long_audio_processor = LongAudioProcessor(study_service=study_service, splitter=AudioSplitter())
+subject_manager = SubjectManager(study_service=study_service)
+lesson_processor = LessonProcessor(study_service=study_service, long_audio_processor=long_audio_processor)
 
 
 
@@ -34,6 +38,17 @@ class QuizRequest(BaseModel):
 
 class QuizAnswers(BaseModel):
     answers: List[Optional[int]]
+
+
+
+class SubjectRequest(BaseModel):
+    name: str
+
+
+
+class CourseSubject(BaseModel):
+    subject: str
+    lesson_number: Optional[int] = None
 
 
 
@@ -356,3 +371,128 @@ def export_course(
         media_type=exported["media_type"],
         headers={"Content-Disposition": f'attachment; filename="{exported["file_name"]}"'},
     )
+
+
+@router.post("/subjects")
+def create_subject(request: SubjectRequest):
+
+    try:
+        subject = subject_manager.create_subject(name=request.name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return subject
+
+
+@router.get("/subjects")
+def list_subjects():
+    return subject_manager.list_subjects()
+
+
+@router.delete("/subjects/{subject}")
+def delete_subject(subject: str, delete_lessons: bool = False):
+
+    try:
+        deleted = subject_manager.delete_subject(name=subject, delete_lessons=delete_lessons)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Matière introuvable.")
+
+    return deleted
+
+
+@router.post("/subjects/{subject}/lessons")
+def add_lesson(
+    subject: str,
+    background_tasks: BackgroundTasks,
+    audio_file: Optional[UploadFile] = File(None),
+    pdf_file: Optional[UploadFile] = File(None),
+    user_consent: bool = Form(False),
+    lesson_number: str = Form(""),
+):
+    if lesson_number.strip() and not lesson_number.strip().isdigit():
+        raise HTTPException(status_code=400, detail="Le numéro de la leçon doit être un nombre entier.")
+
+    audio_bytes = audio_file.file.read() if audio_file is not None and audio_file.filename else b""
+    pdf_bytes = pdf_file.file.read() if pdf_file is not None and pdf_file.filename else b""
+
+    try:
+        lesson = subject_manager.add_lesson(
+            subject=subject,
+            lesson_number=int(lesson_number) if lesson_number.strip() else None,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    course_id = lesson["course_id"]
+    pdf_groups = []
+
+    try:
+        if audio_bytes:
+            long_audio_processor.prepare(
+                course_id=course_id,
+                audio_file_name=audio_file.filename,
+                audio_bytes=audio_bytes,
+                user_consent=user_consent,
+            )
+
+        if pdf_bytes:
+            pdf_groups = study_service.prepare_pdf(
+                course_id=course_id,
+                pdf_file_name=pdf_file.filename,
+                pdf_bytes=pdf_bytes,
+            )
+    except (PermissionError, ValueError) as error:
+        long_audio_processor.jobs.pop(course_id, None)
+        study_service.delete_course(course_id=course_id)
+
+        if isinstance(error, PermissionError):
+            raise HTTPException(status_code=403, detail=str(error))
+
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if audio_bytes or pdf_groups:
+        background_tasks.add_task(
+            lesson_processor.process,
+            course_id=course_id,
+            audio_file_name=audio_file.filename if audio_bytes else None,
+            audio_bytes=audio_bytes,
+            pdf_groups=pdf_groups,
+        )
+
+    return {
+        **lesson,
+        "status": "processing" if (audio_bytes or pdf_groups) else "empty",
+        "has_audio": bool(audio_bytes),
+        "has_pdf": bool(pdf_groups),
+    }
+
+
+@router.get("/courses/{course_id}/lesson-status")
+def get_lesson_status(course_id: str):
+    status = lesson_processor.get_status(course_id=course_id)
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Aucun traitement de leçon pour ce cours.")
+
+    return status
+
+
+@router.patch("/courses/{course_id}/subject")
+def assign_course_subject(course_id: str, request: CourseSubject):
+
+    try:
+        result = subject_manager.assign_course(
+            course_id=course_id,
+            subject=request.subject,
+            lesson_number=request.lesson_number,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return result

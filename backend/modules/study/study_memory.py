@@ -42,6 +42,11 @@ class StudyMemory:
             "correct INTEGER NOT NULL, "
             "answered_at TEXT NOT NULL)"
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS subjects ("
+            "name TEXT PRIMARY KEY, "
+            "created_at TEXT NOT NULL)"
+        )
         connection.commit()
         connection.close()
 
@@ -166,5 +171,30 @@ class StudyMemory:
     def clear_attempts(self):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DELETE FROM attempts")
+        connection.commit()
+        connection.close()
+
+
+    def add_subject(self, name):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute(
+            "INSERT OR IGNORE INTO subjects (name, created_at) VALUES (?, ?)",
+            (name, datetime.now().isoformat(timespec="seconds")),
+        )
+        connection.commit()
+        connection.close()
+
+
+    def list_subjects(self):
+        connection = sqlite3.connect(self.database_path)
+        rows = connection.execute("SELECT name FROM subjects ORDER BY name COLLATE NOCASE").fetchall()
+        connection.close()
+
+        return [name for (name,) in rows]
+
+
+    def delete_subject(self, name):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DELETE FROM subjects WHERE name = ?", (name,))
         connection.commit()
         connection.close()
