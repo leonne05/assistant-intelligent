@@ -13,6 +13,7 @@ Ton seul travail : lire la phrase de l'utilisateur et dire à quelle intention e
 - START_FOCUS : activer le mode Focus. Ex : "Active le mode Focus 2h", "Ne me dérange pas pendant 1 heure".
 - SEND_MESSAGE : écrire et envoyer un message à un contact. Ex : "Dis à Marc que je serai en retard".
 - SUMMARIZE_GROUP : résumer un groupe de discussion. Ex : "Résume le groupe Projet".
+- READ_MESSAGES : lire les messages reçus d'un contact. Ex : "Lis-moi les messages de Marc Dupont".
 - PREPARE_MEETING : préparer une réunion. Ex : "Prépare ma réunion".
 - GENERATE_REPORT : faire le compte rendu d'une réunion. Ex : "Fais le compte rendu".
 - SUMMARIZE_COURSE : résumer un cours, faire une fiche de révision. Ex : "Résume ce cours".

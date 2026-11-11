@@ -3,6 +3,7 @@ from mistralai.client.utils import BackoffStrategy, RetryConfig
 from dotenv import load_dotenv
 from intent_router import IntentRouter
 from modules.planning_module import PlanningModule
+from modules.communication_module import CommunicationModule
 import base64
 import os
 
@@ -28,6 +29,7 @@ class ConversationAgent:
         self.intent_router_object = IntentRouter(self.mistral_client)
         self.modules = [
             PlanningModule(),
+            CommunicationModule(self.mistral_client),
         ]
         self.voice_id = None
 
@@ -81,6 +83,12 @@ class ConversationAgent:
                 return module
         return None
 
+    def find_pending_module(self):
+        for module in self.modules:
+            if module.has_pending():
+                return module
+        return None
+
     def generate_response(self):
         return self.mistral_client.chat.complete(
             model=self.MODEL,
@@ -101,13 +109,19 @@ class ConversationAgent:
         return response
 
     def ask_llm(self, text_interaction):
-        intent = self.intent_router_object.analyse_intent(text_interaction)
-        print(f"[JARVIS] Intention : {intent['intent']} ({intent['confidence']}) {intent['entities']}")
+        # Un module attend une réponse (ex : "Je l'envoie ?") : on lui donne directement la phrase.
+        pending_module = self.find_pending_module()
+        if pending_module is None:
+            intent = self.intent_router_object.analyse_intent(text_interaction)
+            print(f"[JARVIS] Intention : {intent['intent']} ({intent['confidence']}) {intent['entities']}")
 
         self.update_conversation_history(role="user", text_interaction=text_interaction)
 
         try:
-            response = self.route(intent, text_interaction)
+            if pending_module is not None:
+                response = pending_module.handle_pending(text_interaction)
+            else:
+                response = self.route(intent, text_interaction)
         except Exception:
             # La question est restée sans réponse : on la retire de l'historique.
             self.conversation_history.pop()

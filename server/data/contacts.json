@@ -1,0 +1,6 @@
+[
+    {"name": "Marc Dupont", "relation": "client", "phone": "+33600000001"},
+    {"name": "Marc Martin", "relation": "collègue", "phone": "+33600000002"},
+    {"name": "Paul Bernard", "relation": "ami", "phone": "+33600000003"},
+    {"name": "Sophie Leroy", "relation": "manager", "phone": "+33600000004"}
+]

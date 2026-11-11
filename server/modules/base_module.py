@@ -7,6 +7,7 @@ class BaseModule:
 
     name = ""
     owner = ""
+    demo = False
 
     def __init__(self):
         self.actions = {}
@@ -16,3 +17,10 @@ class BaseModule:
 
     def handle(self, intent, entities, text_interaction):
         return self.actions[intent](entities, text_interaction)
+
+    def has_pending(self):
+        """True si le module attend une réponse de l'utilisateur (ex : une confirmation)."""
+        return False
+
+    def handle_pending(self, text_interaction):
+        return None

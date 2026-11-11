@@ -1,0 +1,42 @@
+[
+    {
+        "name": "Marc Dupont",
+        "type": "contact",
+        "app": "WhatsApp",
+        "authorized": true,
+        "messages": [
+            {"sender": "Marc Dupont", "content": "Bonjour, on maintient bien le rendez-vous de 14h ?"}
+        ]
+    },
+    {
+        "name": "Marc Martin",
+        "type": "contact",
+        "app": "SMS",
+        "authorized": true,
+        "messages": [
+            {"sender": "Marc Martin", "content": "Tu peux m'envoyer le fichier avant ce soir ?"}
+        ]
+    },
+    {
+        "name": "Sophie Leroy",
+        "type": "contact",
+        "app": "WhatsApp",
+        "authorized": false,
+        "messages": [
+            {"sender": "Sophie Leroy", "content": "Message privé non autorisé."}
+        ]
+    },
+    {
+        "name": "Projet",
+        "type": "group",
+        "app": "WhatsApp",
+        "authorized": true,
+        "messages": [
+            {"sender": "Paul Bernard", "content": "J'ai avancé les 20€ pour le restaurant d'équipe."},
+            {"sender": "Marc Martin", "content": "Ok, faut que chacun rembourse Paul."},
+            {"sender": "Sophie Leroy", "content": "La présentation client est jeudi 10h, il faut finir les slides mercredi."},
+            {"sender": "Marc Martin", "content": "Je m'occupe de la partie technique."},
+            {"sender": "Paul Bernard", "content": "Quelqu'un peut réserver la salle ?"}
+        ]
+    }
+]

@@ -19,6 +19,7 @@ class IntentRouter:
         "START_FOCUS",
         "SEND_MESSAGE",
         "SUMMARIZE_GROUP",
+        "READ_MESSAGES",
         "PREPARE_MEETING",
         "GENERATE_REPORT",
         "SUMMARIZE_COURSE",
