@@ -47,6 +47,13 @@ class StudyMemory:
             "name TEXT PRIMARY KEY, "
             "created_at TEXT NOT NULL)"
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS plans ("
+            "plan_id TEXT PRIMARY KEY, "
+            "subject TEXT NOT NULL, "
+            "data TEXT NOT NULL, "
+            "created_at TEXT NOT NULL)"
+        )
         connection.commit()
         connection.close()
 
@@ -196,5 +203,59 @@ class StudyMemory:
     def delete_subject(self, name):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DELETE FROM subjects WHERE name = ?", (name,))
+        connection.commit()
+        connection.close()
+
+
+    def save_plan(self, plan_id, subject, plan):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute(
+            "INSERT OR REPLACE INTO plans (plan_id, subject, data, created_at) VALUES (?, ?, ?, ?)",
+            (plan_id, subject, json.dumps(plan, ensure_ascii=False), plan["created_at"]),
+        )
+        connection.commit()
+        connection.close()
+
+
+    def load_plan(self, plan_id):
+        connection = sqlite3.connect(self.database_path)
+        row = connection.execute("SELECT data FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
+        connection.close()
+
+        if row is None:
+            return None
+
+        return json.loads(row[0])
+
+
+    def list_plans(self, subject=None):
+        connection = sqlite3.connect(self.database_path)
+
+        if subject:
+            rows = connection.execute(
+                "SELECT data FROM plans WHERE subject = ? ORDER BY created_at DESC",
+                (subject,),
+            ).fetchall()
+        else:
+            rows = connection.execute("SELECT data FROM plans ORDER BY created_at DESC").fetchall()
+
+        connection.close()
+
+        return [json.loads(data) for (data,) in rows]
+
+
+    def delete_plan(self, plan_id):
+        connection = sqlite3.connect(self.database_path)
+        cursor = connection.execute("DELETE FROM plans WHERE plan_id = ?", (plan_id,))
+        connection.commit()
+        deleted = cursor.rowcount > 0
+        connection.close()
+
+        return deleted
+
+
+    def delete_plans(self, subject):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DELETE FROM plans WHERE subject = ?", (subject,))
         connection.commit()
         connection.close()

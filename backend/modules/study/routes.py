@@ -7,6 +7,7 @@ from modules.study.audio_splitter import AudioSplitter
 from modules.study.exporter import StudyExporter
 from modules.study.lessons import LessonProcessor
 from modules.study.long_audio import LongAudioProcessor
+from modules.study.revision_planner import RevisionPlanner
 from modules.study.service import StudyService
 from modules.study.subjects import SubjectManager
 
@@ -17,6 +18,11 @@ study_exporter = StudyExporter()
 long_audio_processor = LongAudioProcessor(study_service=study_service, splitter=AudioSplitter())
 subject_manager = SubjectManager(study_service=study_service)
 lesson_processor = LessonProcessor(study_service=study_service, long_audio_processor=long_audio_processor)
+revision_planner = RevisionPlanner(
+    study_service=study_service,
+    subject_manager=subject_manager,
+    study_exporter=study_exporter,
+)
 
 
 
@@ -49,6 +55,13 @@ class SubjectRequest(BaseModel):
 class CourseSubject(BaseModel):
     subject: str
     lesson_number: Optional[int] = None
+
+
+
+class RevisionPlanRequest(BaseModel):
+    exam_date: str
+    minutes_per_day: int = 60
+    start_date: Optional[str] = None
 
 
 
@@ -496,3 +509,66 @@ def assign_course_subject(course_id: str, request: CourseSubject):
         raise HTTPException(status_code=404, detail="Cours introuvable.")
 
     return result
+
+
+@router.post("/subjects/{subject}/revision-plan")
+def create_revision_plan(subject: str, request: RevisionPlanRequest, background_tasks: BackgroundTasks):
+
+    try:
+        plan = revision_planner.prepare(
+            subject=subject,
+            exam_date_text=request.exam_date,
+            minutes_per_day=request.minutes_per_day,
+            start_date_text=request.start_date,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Matière introuvable.")
+
+    background_tasks.add_task(revision_planner.process, plan_id=plan["plan_id"])
+
+    return {"plan_id": plan["plan_id"], "subject": plan["subject"], "status": "processing"}
+
+
+@router.get("/plans")
+def list_revision_plans(subject: Optional[str] = None):
+    return {"plans": revision_planner.list_plans(subject=subject)}
+
+
+@router.get("/plans/{plan_id}")
+def get_revision_plan_by_id(plan_id: str):
+    plan = revision_planner.get_plan(plan_id=plan_id)
+
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan introuvable.")
+
+    return plan
+
+
+@router.get("/plans/{plan_id}/export")
+def export_revision_plan(plan_id: str, file_format: str = Query("pdf", alias="format")):
+
+    try:
+        exported = revision_planner.export(plan_id=plan_id, file_format=file_format or "pdf")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if exported is None:
+        raise HTTPException(status_code=404, detail="Plan introuvable.")
+
+    return Response(
+        content=exported["data"],
+        media_type=exported["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{exported["file_name"]}"'},
+    )
+
+
+@router.delete("/plans/{plan_id}")
+def delete_revision_plan(plan_id: str):
+
+    if not revision_planner.delete_plan(plan_id=plan_id):
+        raise HTTPException(status_code=404, detail="Plan introuvable.")
+
+    return {"plan_id": plan_id, "deleted": True}
