@@ -40,4 +40,3 @@ interactive se trouve sur `/docs`. Copiez `.env.example` vers `.env` puis rensei
 utilisés dans l’ordre défini par `LLM_PROVIDER_ORDER` ; par défaut :
 `groq,gemini,mistral`. Si le premier fournisseur échoue, l’API essaie le
 suivant.
-- [Module D�placements](deplacements/README.md)
