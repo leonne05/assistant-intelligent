@@ -7,6 +7,7 @@ from modules.study.audio_splitter import AudioSplitter
 from modules.study.exporter import StudyExporter
 from modules.study.lessons import LessonProcessor
 from modules.study.long_audio import LongAudioProcessor
+from modules.study.revision_offers import RevisionOfferManager
 from modules.study.revision_planner import RevisionPlanner
 from modules.study.service import StudyService
 from modules.study.subjects import SubjectManager
@@ -23,6 +24,7 @@ revision_planner = RevisionPlanner(
     subject_manager=subject_manager,
     study_exporter=study_exporter,
 )
+revision_offers = RevisionOfferManager(study_service=study_service, revision_planner=revision_planner)
 
 
 
@@ -62,6 +64,12 @@ class RevisionPlanRequest(BaseModel):
     exam_date: str
     minutes_per_day: int = 60
     start_date: Optional[str] = None
+
+
+
+class RevisionAnswer(BaseModel):
+    accept: bool
+    minutes_per_day: int = 60
 
 
 
@@ -289,7 +297,7 @@ def decide_course_event(course_id: str, event_id: str, decision: EventDecision):
     if event is None:
         raise HTTPException(status_code=404, detail="Cours ou événement introuvable.")
 
-    return event
+    return {**event, "revision_offer": revision_offers.get_offer(course_id=course_id, event=event)}
 
 
 @router.post("/courses/{course_id}/quiz")
@@ -572,3 +580,32 @@ def delete_revision_plan(plan_id: str):
         raise HTTPException(status_code=404, detail="Plan introuvable.")
 
     return {"plan_id": plan_id, "deleted": True}
+
+
+@router.get("/revision-offers")
+def list_revision_offers():
+    return {"offers": revision_offers.list_offers()}
+
+
+@router.post("/courses/{course_id}/events/{event_id}/revision")
+def answer_revision_offer(course_id: str, event_id: str, answer: RevisionAnswer, background_tasks: BackgroundTasks):
+
+    try:
+        result = revision_offers.answer(
+            course_id=course_id,
+            event_id=event_id,
+            accept=answer.accept,
+            minutes_per_day=answer.minutes_per_day,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Cours ou événement introuvable.")
+
+    if result["plan"] is None:
+        return {"revision": result["revision"], "plan_id": None}
+
+    background_tasks.add_task(revision_planner.process, plan_id=result["plan"]["plan_id"])
+
+    return {"revision": result["revision"], "plan_id": result["plan"]["plan_id"], "status": "processing"}
