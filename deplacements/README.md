@@ -4,28 +4,35 @@ Responsable : **Moïra** · Branche : `feature/deplacements`
 
 Ce module répond aux questions de déplacement de l'assistant : **météo**, **perturbations de transport** et **planification de trajet** (heure de départ, alternative, marge météo). Chaque appel renvoie **une phrase prête à être lue à voix haute**. Le module ne lève jamais d'exception.
 
-## Intentions
+## Contrat avec le routeur
 
-| Intention | Paramètres | Exemple de réponse |
+Le routeur appelle chaque action ainsi : `fonction(entities, text_interaction)` et attend **une phrase** en retour. Seules les entités déjà présentes sont envoyées, donc le module utilise `entities.get(...)`.
+
+| Intention | Entités utilisées | Exemple de réponse |
 |---|---|---|
-| `GET_WEATHER` | `city` (option), `day` (option, `AAAA-MM-JJ`) | « À Paris le 27/11 : pluie, 4 à 9°C… » |
-| `CHECK_TRANSPORT` | `line` (ex. `"RER A"`) | « Aucune perturbation signalée sur RER A. » |
-| `PLAN_TRAVEL` | `destination`, `arrive_by` (`AAAA-MM-JJTHH:MM`), `origin` (option), `city` (option) | « Pars à 08:05 : RER A, 40 min. » |
+| `GET_WEATHER` | `location` (ville), `datetime` (jour) | « À Caen le 12/11 : pluie, 5 à 9°C… » |
+| `CHECK_TRANSPORT` | ligne repérée dans `text_interaction` (ex. « RER A »), sinon `location` | « Aucune perturbation signalée sur RER A. » |
+| `PLAN_TRAVEL` | `location` (destination), `datetime` (heure d'arrivée) | « Pars à 08:05 : RER A, 40 min. » |
 
-- `origin` vaut `HOME_ADDRESS` par défaut.
-- `PLAN_TRAVEL` sans `destination` ni `arrive_by` prend le **prochain rendez-vous** du module Planning (via `agenda.py`).
+- `datetime` est un texte ISO (`"2026-11-12T14:00"`). Pour la météo, seule la date est utilisée.
+- Le départ est `HOME_ADDRESS` (`.env`).
+- `PLAN_TRAVEL` sans `location` ni `datetime` prend le **prochain rendez-vous** du module Planning (via `agenda.py`).
+- Les autres entités (`duration_minutes`, `contact`, `device`...) sont ignorées.
+- Une action ne lève jamais d'exception : en cas de problème, elle renvoie une phrase.
 
 ## Utilisation
 
 ```python
-from deplacements import handle_intent
+from deplacements import ACTIONS, handle_intent
 
-handle_intent("GET_WEATHER", city="Paris", day="2026-11-27")
-handle_intent("CHECK_TRANSPORT", line="RER A")
-handle_intent("PLAN_TRAVEL", destination="HETIC Paris 13", arrive_by="2026-11-27T09:00")
+# Enregistrement dans le module : self.actions = ACTIONS
+ACTIONS["GET_WEATHER"]({"location": "Caen", "datetime": "2026-11-12T14:00"}, "Quel temps fera-t-il demain à Caen ?")
+
+# Équivalent, par nom d'intention
+handle_intent("CHECK_TRANSPORT", {}, "Y a-t-il des perturbations sur le RER A ?")
 ```
 
-Pour l'`IntentRouter` : `deplacements.HANDLERS` est un dictionnaire `{"GET_WEATHER": fonction, ...}` qui permet d'enregistrer les trois intentions.
+`ACTIONS` est un dictionnaire `{"GET_WEATHER": fonction, "CHECK_TRANSPORT": fonction, "PLAN_TRAVEL": fonction}`.
 
 ## Installation
 
@@ -49,7 +56,7 @@ La météo fonctionne sans clé (Open-Meteo).
 
 ```
 deplacements/
-├── intents.py     point d'entrée : handle_intent, HANDLERS
+├── intents.py     actions du routeur : ACTIONS, handle_intent
 ├── planner.py     logique : meilleur trajet, alternative, heure de départ
 ├── weather.py     météo (Open-Meteo) + règle d'impact sur le trajet
 ├── transport.py   itinéraires et perturbations (PRIM / Navitia)
@@ -75,7 +82,7 @@ Si la météo ou les perturbations sont indisponibles, l'itinéraire est quand m
 pytest
 ```
 
-18 tests : calcul d'heure de départ, choix du trajet, alternative en cas de perturbation, API en panne, lieu inconnu, marge pluie.
+23 tests : contrat du routeur, lecture des entités, calcul d'heure de départ, choix du trajet, alternative en cas de perturbation, API en panne, lieu inconnu, marge pluie.
 
 ## Limites connues / à faire
 
