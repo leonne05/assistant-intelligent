@@ -259,3 +259,26 @@ class StudyMemory:
         connection.execute("DELETE FROM plans WHERE subject = ?", (subject,))
         connection.commit()
         connection.close()
+
+
+    def list_quizzes(self):
+        connection = sqlite3.connect(self.database_path)
+        rows = connection.execute(
+            "SELECT quiz_id, course_id, data, created_at FROM quizzes ORDER BY created_at DESC"
+        ).fetchall()
+        connection.close()
+
+        return [
+            {"quiz_id": quiz_id, "course_id": course_id, "created_at": created_at, "quiz": json.loads(data)}
+            for quiz_id, course_id, data, created_at in rows
+        ]
+
+
+    def delete_quiz(self, quiz_id):
+        connection = sqlite3.connect(self.database_path)
+        cursor = connection.execute("DELETE FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+        connection.commit()
+        deleted = cursor.rowcount > 0
+        connection.close()
+
+        return deleted

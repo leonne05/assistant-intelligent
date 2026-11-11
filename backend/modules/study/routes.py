@@ -6,6 +6,7 @@ from typing import List, Literal, Optional
 from modules.study.audio_splitter import AudioSplitter
 from modules.study.exporter import StudyExporter
 from modules.study.lessons import LessonProcessor
+from modules.study.library import StudyLibrary
 from modules.study.long_audio import LongAudioProcessor
 from modules.study.revision_offers import RevisionOfferManager
 from modules.study.revision_planner import RevisionPlanner
@@ -25,6 +26,12 @@ revision_planner = RevisionPlanner(
     study_exporter=study_exporter,
 )
 revision_offers = RevisionOfferManager(study_service=study_service, revision_planner=revision_planner)
+study_library = StudyLibrary(
+    study_service=study_service,
+    subject_manager=subject_manager,
+    revision_planner=revision_planner,
+    study_exporter=study_exporter,
+)
 
 
 
@@ -341,6 +348,8 @@ def correct_quiz(quiz_id: str, request: QuizAnswers):
     if correction is None:
         raise HTTPException(status_code=404, detail="Quiz introuvable.")
 
+    study_library.record_correction(quiz_id=quiz_id, correction=correction)
+
     return correction
 
 
@@ -609,3 +618,50 @@ def answer_revision_offer(course_id: str, event_id: str, answer: RevisionAnswer,
     background_tasks.add_task(revision_planner.process, plan_id=result["plan"]["plan_id"])
 
     return {"revision": result["revision"], "plan_id": result["plan"]["plan_id"], "status": "processing"}
+
+
+@router.get("/library")
+def get_library(subject: Optional[str] = None):
+    return study_library.get_library(subject=subject)
+
+
+@router.get("/library/quizzes")
+def list_library_quizzes(subject: Optional[str] = None, course_id: Optional[str] = None):
+    return {"quizzes": study_library.list_quizzes(subject=subject, course_id=course_id)}
+
+
+@router.get("/library/quizzes/{quiz_id}")
+def get_library_quiz(quiz_id: str):
+    quiz = study_library.get_quiz(quiz_id=quiz_id)
+
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz introuvable.")
+
+    return quiz
+
+
+@router.get("/library/quizzes/{quiz_id}/export")
+def export_library_quiz(quiz_id: str, file_format: str = Query("pdf", alias="format")):
+
+    try:
+        exported = study_library.export_quiz(quiz_id=quiz_id, file_format=file_format or "pdf")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if exported is None:
+        raise HTTPException(status_code=404, detail="Quiz introuvable.")
+
+    return Response(
+        content=exported["data"],
+        media_type=exported["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{exported["file_name"]}"'},
+    )
+
+
+@router.delete("/library/quizzes/{quiz_id}")
+def delete_library_quiz(quiz_id: str):
+
+    if not study_library.delete_quiz(quiz_id=quiz_id):
+        raise HTTPException(status_code=404, detail="Quiz introuvable.")
+
+    return {"quiz_id": quiz_id, "deleted": True}
