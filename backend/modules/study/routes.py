@@ -9,6 +9,7 @@ from modules.study.exporter import StudyExporter
 from modules.study.lessons import LessonProcessor
 from modules.study.library import StudyLibrary
 from modules.study.long_audio import LongAudioProcessor
+from modules.study.marks import CourseMarks
 from modules.study.revision_offers import RevisionOfferManager
 from modules.study.revision_planner import RevisionPlanner
 from modules.study.service import StudyService
@@ -28,6 +29,7 @@ revision_planner = RevisionPlanner(
 )
 revision_offers = RevisionOfferManager(study_service=study_service, revision_planner=revision_planner)
 explainer = Explainer(study_service=study_service, subject_manager=subject_manager)
+course_marks = CourseMarks(study_service=study_service)
 study_library = StudyLibrary(
     study_service=study_service,
     subject_manager=subject_manager,
@@ -79,6 +81,11 @@ class RevisionPlanRequest(BaseModel):
 class RevisionAnswer(BaseModel):
     accept: bool
     minutes_per_day: int = 60
+
+
+
+class MarkRequest(BaseModel):
+    text: str
 
 
 
@@ -719,5 +726,56 @@ def check_explanation(request: ExplainCheck):
         raise HTTPException(status_code=400, detail=str(error))
     except Exception:
         raise HTTPException(status_code=502, detail="Le service est indisponible, réessaie dans une minute.")
+
+    return result
+
+
+@router.post("/courses/{course_id}/marks")
+def add_course_mark(course_id: str, request: MarkRequest):
+
+    try:
+        mark = course_marks.add_mark(course_id=course_id, text=request.text)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if mark is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return mark
+
+
+@router.get("/courses/{course_id}/marks")
+def list_course_marks(course_id: str):
+    marks = course_marks.list_marks(course_id=course_id)
+
+    if marks is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "marks": marks}
+
+
+@router.delete("/courses/{course_id}/marks/{mark_id}")
+def delete_course_mark(course_id: str, mark_id: str):
+    deleted = course_marks.delete_mark(course_id=course_id, mark_id=mark_id)
+
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Passage marqué introuvable.")
+
+    return {"course_id": course_id, "mark_id": mark_id, "deleted": True}
+
+
+@router.get("/courses/{course_id}/marked-summary")
+def get_marked_summary(course_id: str):
+
+    try:
+        result = course_marks.get_marked_summary(course_id=course_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
 
     return result

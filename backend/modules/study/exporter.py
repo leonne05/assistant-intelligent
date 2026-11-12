@@ -9,6 +9,8 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate
 
+from modules.study.marks import CourseMarks
+
 
 class StudyExporter:
     def __init__(self):
@@ -25,7 +27,7 @@ class StudyExporter:
         self.replacements = {
             "→": "->", "←": "<-", "≥": ">=", "≤": "<=", "≠": "!=", "≈": "~",
             "−": "-", "√": "racine ", "∞": "infini", "π": "pi", "∑": "somme",
-            "’": "'", "“": '"', "”": '"', "\u202f": " ", "\u00a0": " ",
+            "’": "'", "“": '"', "”": '"', " ": " ", " ": " ",
         }
 
         self.body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=10.5, leading=15, spaceAfter=6)
@@ -41,9 +43,14 @@ class StudyExporter:
     def get_best_summary(self, course):
 
         if course["pdf"] is not None and course["pdf"]["summary"]:
-            return course["pdf"]["summary"]
+            summary = course["pdf"]["summary"]
+        else:
+            summary = course["summary"]
 
-        return course["summary"]
+        if not summary:
+            return summary
+
+        return CourseMarks.apply(text=summary, marks=course.get("marks", []))
 
 
     def demote_headings(self, text):
@@ -68,6 +75,9 @@ class StudyExporter:
             raise ValueError("Ce cours est vide : il n'y a rien à exporter.")
 
         parts = [f"# Cours {course_id} - fiche complète", footer]
+
+        if course.get("marks"):
+            parts.append(CourseMarks.build_section(marks=course["marks"]))
 
         if course["pdf"] is not None and course["pdf"]["summary"]:
             parts.append("## Résumé global (PDF et explications orales)")

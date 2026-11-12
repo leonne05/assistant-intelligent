@@ -1,4 +1,5 @@
 from modules.module6_llm import LlmClient
+from modules.study.marks import CourseMarks
 from modules.study.study_memory import StudyMemory
 
 from pypdf import PdfReader
@@ -745,6 +746,11 @@ class StudyService:
         else:
             chunk_summaries = [summary for summary in course["chunk_summaries"] if summary]
             material = "\n\n".join(chunk_summaries) if chunk_summaries else course["transcript"]
+
+        marks = course.get("marks", [])
+
+        if marks:
+            material = CourseMarks.build_section(marks=marks) + "\n\n" + material
 
         return material[:self.max_quiz_chars]
 

@@ -7,7 +7,7 @@ Le message contient le nombre de questions demandé, puis le contenu du cours (r
 ## Règles
 
 - Base-toi UNIQUEMENT sur le contenu fourni. N'invente rien qui n'y figure pas.
-- Pose des questions de compréhension et de mémorisation sur les notions importantes, en priorité celles écrites en gras (elles correspondent à ce que le professeur a souligné).
+- Pose des questions de compréhension et de mémorisation sur les notions importantes, en priorité celles écrites en gras (elles correspondent à ce que le professeur a souligné) et celles de la section « Passages marqués par toi » : l'étudiant les a lui-même jugées importantes, pose au moins une question sur chacune quand le nombre de questions le permet.
 - Chaque question a exactement 4 choix : une seule bonne réponse, trois mauvaises réponses plausibles mais clairement fausses d'après le cours.
 - Les choix doivent être courts et de longueur comparable. Ne mets pas « toutes les réponses » ni « aucune de ces réponses ».
 - Varie la position de la bonne réponse.
