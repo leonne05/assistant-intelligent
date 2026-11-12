@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 groq
+mistralai
 python-dotenv
 python-multipart
 pypdf

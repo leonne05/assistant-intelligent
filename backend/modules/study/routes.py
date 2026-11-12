@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
 from modules.study.audio_splitter import AudioSplitter
+from modules.study.explainer import Explainer
 from modules.study.exporter import StudyExporter
 from modules.study.lessons import LessonProcessor
 from modules.study.library import StudyLibrary
@@ -26,6 +27,7 @@ revision_planner = RevisionPlanner(
     study_exporter=study_exporter,
 )
 revision_offers = RevisionOfferManager(study_service=study_service, revision_planner=revision_planner)
+explainer = Explainer(study_service=study_service, subject_manager=subject_manager)
 study_library = StudyLibrary(
     study_service=study_service,
     subject_manager=subject_manager,
@@ -77,6 +79,23 @@ class RevisionPlanRequest(BaseModel):
 class RevisionAnswer(BaseModel):
     accept: bool
     minutes_per_day: int = 60
+
+
+
+class ExplainRequest(BaseModel):
+    topic: str
+    level: Literal["simple", "plus_simple", "approfondi"] = "simple"
+    course_id: Optional[str] = None
+    subject: Optional[str] = None
+
+
+
+class ExplainCheck(BaseModel):
+    topic: str
+    question: str
+    answer: str
+    course_id: Optional[str] = None
+    subject: Optional[str] = None
 
 
 
@@ -665,3 +684,40 @@ def delete_library_quiz(quiz_id: str):
         raise HTTPException(status_code=404, detail="Quiz introuvable.")
 
     return {"quiz_id": quiz_id, "deleted": True}
+
+
+@router.post("/explain")
+def explain_topic(request: ExplainRequest):
+
+    try:
+        result = explainer.explain(
+            topic=request.topic,
+            level=request.level,
+            course_id=request.course_id or None,
+            subject=request.subject or None,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service est indisponible, réessaie dans une minute.")
+
+    return result
+
+
+@router.post("/explain/check")
+def check_explanation(request: ExplainCheck):
+
+    try:
+        result = explainer.check(
+            topic=request.topic,
+            question=request.question,
+            answer=request.answer,
+            course_id=request.course_id or None,
+            subject=request.subject or None,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service est indisponible, réessaie dans une minute.")
+
+    return result

@@ -2,6 +2,7 @@ from groq import Groq
 
 from dotenv import load_dotenv
 import os
+import threading
 import time
 
 load_dotenv()
@@ -10,9 +11,26 @@ load_dotenv()
 
 class LlmClient:
     def __init__(self):
+        self.text_provider = os.environ.get("LLM_TEXT_PROVIDER", "mistral").lower()
+        self.audio_provider = os.environ.get("LLM_AUDIO_PROVIDER", "groq").lower()
+
+        for provider in (self.text_provider, self.audio_provider):
+            if provider not in ("mistral", "groq"):
+                raise ValueError("Les fournisseurs possibles sont « mistral » et « groq ».")
+
+        self.mistral_text_model = "mistral-small-latest"
+        self.mistral_audio_model = "voxtral-mini-latest"
+        self.groq_text_model = "openai/gpt-oss-120b"
+        self.groq_audio_model = "whisper-large-v3-turbo"
+
         self.groq_client = None
+        self.mistral_client = None
         self.token_log = []
-        self.tokens_per_minute = 7000
+        self.tokens_per_minute = 200000 if self.text_provider == "mistral" else 7000
+
+        self.mistral_interval = 1.1
+        self.last_mistral_call = 0
+        self.pace_lock = threading.Lock()
 
 
     @staticmethod
@@ -26,11 +44,44 @@ class LlmClient:
         return len(text) // 3 + 1
 
 
+    @staticmethod
+    def extract_text(content):
+
+        if isinstance(content, str):
+            return content
+
+        return "".join(chunk.text for chunk in content if getattr(chunk, "type", None) == "text")
+
+
     def get_groq_client(self):
         if self.groq_client is None:
             self.groq_client = Groq(api_key=os.environ["GROQ_KEY"])
 
         return self.groq_client
+
+
+    def get_mistral_client(self):
+
+        if self.mistral_client is None:
+            try:
+                from mistralai.client import Mistral
+            except ImportError:
+                from mistralai import Mistral
+
+            self.mistral_client = Mistral(api_key=os.environ["MISTRAL_KEY"])
+
+        return self.mistral_client
+
+
+    def pace_mistral(self):
+
+        with self.pace_lock:
+            wait = self.mistral_interval - (time.time() - self.last_mistral_call)
+
+            if wait > 0:
+                time.sleep(wait)
+
+            self.last_mistral_call = time.time()
 
 
     def record_tokens(self, tokens):
@@ -53,9 +104,28 @@ class LlmClient:
             time.sleep(5)
 
 
+    def complete(self, messages):
+
+        if self.text_provider == "mistral":
+            self.pace_mistral()
+
+            response = self.get_mistral_client().chat.complete(
+                model=self.mistral_text_model,
+                messages=messages,
+            )
+
+            return self.extract_text(content=response.choices[0].message.content)
+
+        return self.get_groq_client().chat.completions.create(
+            messages=messages,
+            model=self.groq_text_model,
+            include_reasoning=False,
+        ).choices[0].message.content
+
+
     def ask(self, context, text_interaction):
 
-        response = self.get_groq_client().chat.completions.create(
+        response = self.complete(
             messages=[
                 {
                     "role": "system",
@@ -66,9 +136,7 @@ class LlmClient:
                     "content": text_interaction,
                 }
             ],
-            model="openai/gpt-oss-120b",
-            include_reasoning=False,
-        ).choices[0].message.content
+        )
 
         self.record_tokens(self.estimate_tokens(context + text_interaction + response))
 
@@ -79,11 +147,7 @@ class LlmClient:
 
         messages = [{"role": "system", "content": context}] + history + [{"role": "user", "content": text_interaction}]
 
-        response = self.get_groq_client().chat.completions.create(
-            messages=messages,
-            model="openai/gpt-oss-120b",
-            include_reasoning=False,
-        ).choices[0].message.content
+        response = self.complete(messages=messages)
 
         history_text = "".join(message["content"] for message in history)
         self.record_tokens(self.estimate_tokens(context + history_text + text_interaction + response))
@@ -107,9 +171,20 @@ class LlmClient:
 
     def transcribe(self, audio_file_name, audio_bytes, language, prompt):
 
+        if self.audio_provider == "mistral":
+            self.pace_mistral()
+
+            transcription = self.get_mistral_client().audio.transcriptions.complete(
+                model=self.mistral_audio_model,
+                file={"content": audio_bytes, "file_name": audio_file_name},
+                language=language,
+            )
+
+            return transcription.text
+
         transcription = self.get_groq_client().audio.transcriptions.create(
             file=(audio_file_name, audio_bytes),
-            model="whisper-large-v3-turbo",
+            model=self.groq_audio_model,
             language=language,
             prompt=prompt,
         )
