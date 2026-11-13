@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS – Position</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 24px 16px; background: #f4f5f7; color: #1d1f23; }
+  main { max-width: 420px; margin: auto; }
+  button { width: 100%; padding: 14px; font-size: 1.05rem; border: 0; border-radius: 10px; margin-top: 12px; }
+  #start { background: #2457d6; color: #fff; } #stop { background: #e3e5ea; color: #1d1f23; }
+  #status { margin-top: 18px; padding: 12px; border-radius: 10px; background: #fff; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #15171b; color: #e8eaee; } #status { background: #22252b; }
+    #stop { background: #33373f; color: #e8eaee; }
+  }
+</style></head><body><main>
+<h1>Position pour JARVIS</h1>
+<p>Partage ta position pour que JARVIS calcule tes trajets depuis l'endroit où tu es.
+Garde cette page ouverte : la position reste valable 10 minutes après le dernier envoi.</p>
+<button id="start">Partager ma position</button>
+<button id="stop">Arrêter le partage</button>
+<div id="status">Partage arrêté.</div>
+<script>
+const token = new URLSearchParams(location.search).get("t");
+const status = document.getElementById("status");
+let watchId = null, lastSent = 0;
+
+function send(body) {
+  return fetch("/position?t=" + encodeURIComponent(token), {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+  }).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); });
+}
+
+document.getElementById("start").onclick = () => {
+  if (!navigator.geolocation) { status.textContent = "Ce navigateur ne donne pas la position."; return; }
+  if (watchId !== null) return;
+  status.textContent = "Demande d'autorisation…";
+  watchId = navigator.geolocation.watchPosition(pos => {
+    const now = Date.now();
+    if (now - lastSent < 20000) return;  // un envoi toutes les 20 s suffit
+    lastSent = now;
+    const c = pos.coords;
+    send({lat: c.latitude, lon: c.longitude, accuracy: c.accuracy})
+      .then(() => status.textContent = "Position partagée (précision " + Math.round(c.accuracy) +
+                                       " m) à " + new Date().toLocaleTimeString())
+      .catch(e => status.textContent = "JARVIS injoignable : " + e.message);
+  }, err => {
+    status.textContent = err.code === 1 ? "Autorisation refusée : active la localisation pour ce site."
+                                        : "Position introuvable : " + err.message;
+    watchId = null;
+  }, {enableHighAccuracy: true, maximumAge: 30000, timeout: 30000});
+};
+
+document.getElementById("stop").onclick = () => {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null; lastSent = 0;
+  send({clear: true}).then(() => status.textContent = "Partage arrêté, position effacée.")
+                     .catch(e => status.textContent = "JARVIS injoignable : " + e.message);
+};
+</script></main></body></html>
