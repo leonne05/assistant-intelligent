@@ -23,6 +23,24 @@ def test_get_weather_normal(monkeypatch):
     assert "parapluie" in weather.format_weather(w)
 
 
+def test_coords_skip_city_search(monkeypatch):
+    urls = []
+    monkeypatch.setattr(weather, "get_json", lambda url, params=None: urls.append(url) or fake_json(url))
+    w = weather.get_weather("Montreuil", date.today(), ("48.86", "2.44"))
+    assert urls == [weather.METEO_URL] and w["city"] == "Montreuil"
+
+
+def test_missing_weather_code(monkeypatch):
+    def no_code(url, params=None, headers=None):
+        data = fake_json(url, params)
+        if "daily" in data:
+            data["daily"]["weather_code"] = [None]
+        return data
+
+    monkeypatch.setattr(weather, "get_json", no_code)
+    assert weather.get_weather("Paris")["description"] == "conditions inconnues"
+
+
 def test_unknown_city(monkeypatch):
     monkeypatch.setattr(weather, "get_json", lambda *a, **k: {})
     with pytest.raises(DeplacementsError, match="introuvable"):

@@ -29,12 +29,17 @@ def _geocode(city: str) -> dict:
     return results[0]
 
 
-def get_weather(city: str | None = None, day: date | None = None) -> dict:
-    """Météo de `city` pour le jour `day` (aujourd'hui par défaut)."""
+def get_weather(city: str | None = None, day: date | None = None,
+                coords: tuple | None = None) -> dict:
+    """Météo de `city` pour le jour `day` (aujourd'hui par défaut).
+
+    `coords` = (lat, lon) si on les connaît déjà : on ne cherche alors pas la ville.
+    """
     day = day or date.today()
     if day > date.today() + timedelta(days=MAX_FORECAST_DAYS - 1):
         raise DeplacementsError(f"Pas de prévision météo au-delà de {MAX_FORECAST_DAYS} jours.")
-    place = _geocode(city or DEFAULT_CITY)
+    place = ({"name": city, "latitude": coords[0], "longitude": coords[1]} if coords
+             else _geocode(city or DEFAULT_CITY))
     daily = get_json(METEO_URL, {
         "latitude": place["latitude"], "longitude": place["longitude"],
         "daily": DAILY, "start_date": day.isoformat(), "end_date": day.isoformat(),
@@ -43,12 +48,13 @@ def get_weather(city: str | None = None, day: date | None = None) -> dict:
     if not daily:
         raise DeplacementsError(f"Pas de prévision pour le {day:%d/%m/%Y}.")
 
-    def value(key):  # l'API renvoie des listes d'un élément, parfois null
-        return (daily.get(key) or [0])[0] or 0
+    def value(key, default=0):  # l'API renvoie des listes d'un élément, parfois null
+        v = (daily.get(key) or [None])[0]
+        return default if v is None else v
 
     return {
         "city": place["name"], "day": day,
-        "description": WMO.get(value("weather_code"), "conditions inconnues"),
+        "description": WMO.get(value("weather_code", None), "conditions inconnues"),
         "t_min": value("temperature_2m_min"), "t_max": value("temperature_2m_max"),
         "rain_mm": value("precipitation_sum"), "snow_cm": value("snowfall_sum"),
         "rain_prob": value("precipitation_probability_max"),

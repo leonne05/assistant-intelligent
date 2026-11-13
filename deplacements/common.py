@@ -1,4 +1,6 @@
-"""Outils partagés : une seule exception et un seul appel HTTP pour tout le module."""
+"""Outils partagés : une seule exception, un seul appel HTTP et un seul appel PowerShell."""
+import subprocess
+
 import requests
 
 from .config import TIMEOUT
@@ -23,3 +25,9 @@ def get_json(url: str, params: dict | None = None, headers: dict | None = None) 
         raise DeplacementsError(f"Erreur du service (HTTP {code}).")
     except (requests.RequestException, ValueError):
         raise DeplacementsError("Service injoignable.")
+
+
+def run_powershell(script: str, timeout: int) -> subprocess.CompletedProcess:
+    """Script Windows PowerShell : outils intégrés à Windows (localisation, certificat), rien à installer."""
+    return subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, timeout=timeout)
