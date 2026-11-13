@@ -95,6 +95,11 @@ class FlashcardRequest(BaseModel):
 
 
 
+class VocabularyRequest(BaseModel):
+    terms: List[str]
+
+
+
 class MarkRequest(BaseModel):
     text: str
 
@@ -263,10 +268,10 @@ def get_course_transcript(course_id: str):
 
 
 @router.post("/courses/{course_id}/summary")
-def summarize_course(course_id: str):
+def summarize_course(course_id: str, redo: bool = False):
 
     try:
-        summary = study_service.summarize_course(course_id=course_id)
+        summary = study_service.summarize_course(course_id=course_id, redo=redo)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception:
@@ -276,6 +281,32 @@ def summarize_course(course_id: str):
         raise HTTPException(status_code=404, detail="Cours introuvable.")
 
     return {"course_id": course_id, "summary": summary}
+
+
+@router.post("/courses/{course_id}/summary/start")
+def start_course_summary(course_id: str, background_tasks: BackgroundTasks, redo: bool = False):
+
+    try:
+        job = study_service.prepare_summary_job(course_id=course_id, redo=redo)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    background_tasks.add_task(study_service.process_summary_job, course_id=course_id)
+
+    return {"course_id": course_id, **job}
+
+
+@router.get("/courses/{course_id}/summary/status")
+def get_course_summary_status(course_id: str):
+    status = study_service.get_summary_status(course_id=course_id)
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Aucun résumé en cours ou terminé pour ce cours.")
+
+    return {"course_id": course_id, **status}
 
 
 @router.post("/courses/{course_id}/pdf")
@@ -474,15 +505,24 @@ def delete_subject(subject: str, delete_lessons: bool = False):
 def add_lesson(
     subject: str,
     background_tasks: BackgroundTasks,
-    audio_file: Optional[UploadFile] = File(None),
+    audio_1: Optional[UploadFile] = File(None),
+    audio_2: Optional[UploadFile] = File(None),
+    audio_3: Optional[UploadFile] = File(None),
+    audio_4: Optional[UploadFile] = File(None),
+    audio_5: Optional[UploadFile] = File(None),
+    audio_6: Optional[UploadFile] = File(None),
+    audio_7: Optional[UploadFile] = File(None),
+    audio_8: Optional[UploadFile] = File(None),
     pdf_file: Optional[UploadFile] = File(None),
     user_consent: bool = Form(False),
     lesson_number: str = Form(""),
+    vocabulary: str = Form(""),
 ):
     if lesson_number.strip() and not lesson_number.strip().isdigit():
         raise HTTPException(status_code=400, detail="Le numéro de la leçon doit être un nombre entier.")
 
-    audio_bytes = audio_file.file.read() if audio_file is not None and audio_file.filename else b""
+    audio_slots = [audio_1, audio_2, audio_3, audio_4, audio_5, audio_6, audio_7, audio_8]
+    audios = [(audio.filename, audio.file.read()) for audio in audio_slots if audio is not None and audio.filename]
     pdf_bytes = pdf_file.file.read() if pdf_file is not None and pdf_file.filename else b""
 
     try:
@@ -497,13 +537,8 @@ def add_lesson(
     pdf_groups = []
 
     try:
-        if audio_bytes:
-            long_audio_processor.prepare(
-                course_id=course_id,
-                audio_file_name=audio_file.filename,
-                audio_bytes=audio_bytes,
-                user_consent=user_consent,
-            )
+        if audios:
+            lesson_processor.check_audios(audios=audios, user_consent=user_consent)
 
         if pdf_bytes:
             pdf_groups = study_service.prepare_pdf(
@@ -511,8 +546,10 @@ def add_lesson(
                 pdf_file_name=pdf_file.filename,
                 pdf_bytes=pdf_bytes,
             )
+
+        if vocabulary.strip():
+            study_service.set_vocabulary(course_id=course_id, terms=vocabulary.split(","))
     except (PermissionError, ValueError) as error:
-        long_audio_processor.jobs.pop(course_id, None)
         study_service.delete_course(course_id=course_id)
 
         if isinstance(error, PermissionError):
@@ -520,19 +557,19 @@ def add_lesson(
 
         raise HTTPException(status_code=400, detail=str(error))
 
-    if audio_bytes or pdf_groups:
+    if audios or pdf_groups:
+        lesson_processor.prepare(course_id=course_id, audio_count=len(audios))
         background_tasks.add_task(
             lesson_processor.process,
             course_id=course_id,
-            audio_file_name=audio_file.filename if audio_bytes else None,
-            audio_bytes=audio_bytes,
+            audios=audios,
             pdf_groups=pdf_groups,
         )
 
     return {
         **lesson,
-        "status": "processing" if (audio_bytes or pdf_groups) else "empty",
-        "has_audio": bool(audio_bytes),
+        "status": "processing" if (audios or pdf_groups) else "empty",
+        "audio_count": len(audios),
         "has_pdf": bool(pdf_groups),
     }
 
@@ -889,3 +926,27 @@ def export_subject_flashcards(subject: str, file_format: str = Query("csv", alia
         raise HTTPException(status_code=404, detail="Matière introuvable.")
 
     return make_download(exported=exported)
+
+
+@router.put("/courses/{course_id}/vocabulary")
+def set_course_vocabulary(course_id: str, request: VocabularyRequest):
+
+    try:
+        vocabulary = study_service.set_vocabulary(course_id=course_id, terms=request.terms)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if vocabulary is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "vocabulary": vocabulary}
+
+
+@router.get("/courses/{course_id}/vocabulary")
+def get_course_vocabulary(course_id: str):
+    vocabulary = study_service.get_vocabulary(course_id=course_id)
+
+    if vocabulary is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "vocabulary": vocabulary}

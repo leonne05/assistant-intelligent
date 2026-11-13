@@ -12,16 +12,16 @@ load_dotenv()
 class LlmClient:
     def __init__(self):
         self.text_provider = os.environ.get("LLM_TEXT_PROVIDER", "mistral").lower()
-        self.audio_provider = os.environ.get("LLM_AUDIO_PROVIDER", "groq").lower()
+        self.audio_provider = os.environ.get("LLM_AUDIO_PROVIDER", "mistral").lower()
 
         for provider in (self.text_provider, self.audio_provider):
             if provider not in ("mistral", "groq"):
                 raise ValueError("Les fournisseurs possibles sont « mistral » et « groq ».")
 
-        self.mistral_text_model = "mistral-small-latest"
+        self.mistral_text_model = os.environ.get("MISTRAL_TEXT_MODEL", "mistral-small-latest")
         self.mistral_audio_model = "voxtral-mini-latest"
         self.groq_text_model = "openai/gpt-oss-120b"
-        self.groq_audio_model = "whisper-large-v3-turbo"
+        self.groq_audio_model = os.environ.get("GROQ_AUDIO_MODEL", "whisper-large-v3")
 
         self.groq_client = None
         self.mistral_client = None
@@ -68,7 +68,10 @@ class LlmClient:
             except ImportError:
                 from mistralai import Mistral
 
-            self.mistral_client = Mistral(api_key=os.environ["MISTRAL_KEY"])
+            try:
+                self.mistral_client = Mistral(api_key=os.environ["MISTRAL_KEY"], timeout_ms=120000)
+            except TypeError:
+                self.mistral_client = Mistral(api_key=os.environ["MISTRAL_KEY"])
 
         return self.mistral_client
 
@@ -169,16 +172,36 @@ class LlmClient:
                 time.sleep(20)
 
 
-    def transcribe(self, audio_file_name, audio_bytes, language, prompt):
+    def transcribe(self, audio_file_name, audio_bytes, language, prompt, vocabulary=None):
 
         if self.audio_provider == "mistral":
             self.pace_mistral()
 
-            transcription = self.get_mistral_client().audio.transcriptions.complete(
-                model=self.mistral_audio_model,
-                file={"content": audio_bytes, "file_name": audio_file_name},
-                language=language,
-            )
+            options = {}
+
+            if vocabulary:
+                words = []
+
+                for term in vocabulary:
+                    for word in term.replace(",", " ").split():
+                        if word.lower() not in [kept.lower() for kept in words]:
+                            words.append(word)
+
+                options["context_bias"] = words[:100]
+
+            try:
+                transcription = self.get_mistral_client().audio.transcriptions.complete(
+                    model=self.mistral_audio_model,
+                    file={"content": audio_bytes, "file_name": audio_file_name},
+                    language=language,
+                    **options,
+                )
+            except TypeError:
+                transcription = self.get_mistral_client().audio.transcriptions.complete(
+                    model=self.mistral_audio_model,
+                    file={"content": audio_bytes, "file_name": audio_file_name},
+                    language=language,
+                )
 
             return transcription.text
 
@@ -187,6 +210,7 @@ class LlmClient:
             model=self.groq_audio_model,
             language=language,
             prompt=prompt,
+            temperature=0,
         )
 
         return transcription.text

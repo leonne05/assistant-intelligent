@@ -22,6 +22,9 @@ class StudyService:
         self.chunk_summary_context = LlmClient.read_file(
             file_path=os.path.join(os.path.dirname(__file__), "context_chunk_summary.txt")
         )
+        self.vocabulary_context = LlmClient.read_file(
+            file_path=os.path.join(os.path.dirname(__file__), "context_vocabulary.txt")
+        )
         self.course_summary_context = LlmClient.read_file(
             file_path=os.path.join(os.path.dirname(__file__), "context_course_summary.txt")
         )
@@ -95,6 +98,7 @@ class StudyService:
 
         self.memory = StudyMemory(database_path=database_path)
         self.courses = self.memory.load_all_courses()
+        self.summary_jobs = {}
 
         for course_id, course in self.courses.items():
             pdf = course["pdf"]
@@ -352,17 +356,16 @@ class StudyService:
         if chunk_index != expected_index:
             raise ValueError(f"Morceau attendu : {expected_index}, reçu : {chunk_index}.")
 
-        previous_text_end = course["transcript"][-400:]
-
         chunk_text = self.llm_client.transcribe(
             audio_file_name=audio_file_name,
             audio_bytes=audio_bytes,
             language="fr",
-            prompt=previous_text_end or self.default_prompt,
+            prompt=self.build_transcription_prompt(course=course),
+            vocabulary=course.get("vocabulary"),
         )
 
         try:
-            chunk_summary = self.summarize_chunk(chunk_text=chunk_text)
+            chunk_summary = self.summarize_chunk(chunk_text=chunk_text, vocabulary=course.get("vocabulary"))
         except Exception:
             chunk_summary = None
 
@@ -388,12 +391,94 @@ class StudyService:
         }
 
 
-    def summarize_chunk(self, chunk_text):
+    def build_transcription_prompt(self, course):
+
+        vocabulary = course.get("vocabulary")
+
+        if not vocabulary:
+            return self.default_prompt
+
+        return f"{self.default_prompt} Vocabulaire : {', '.join(vocabulary)}."[:600]
+
+
+    def set_vocabulary(self, course_id, terms):
+
+        if course_id not in self.courses:
+            return None
+
+        vocabulary = []
+
+        for term in terms:
+            term = " ".join(str(term).split())[:60]
+
+            if term and term.lower() not in [kept.lower() for kept in vocabulary]:
+                vocabulary.append(term)
+
+        if len(vocabulary) > 80:
+            raise ValueError("Le vocabulaire est limité à 80 mots.")
+
+        self.courses[course_id]["vocabulary"] = vocabulary
+        self.save_course(course_id=course_id)
+
+        return vocabulary
+
+
+    def extract_vocabulary(self, text):
+
+        if not text.strip():
+            return []
+
+        try:
+            answer = self.llm_client.ask(context=self.vocabulary_context, text_interaction=text[:6000])
+            start = answer.find("[")
+            end = answer.rfind("]")
+            terms = json.loads(answer[start:end + 1])
+        except Exception:
+            return []
+
+        if not isinstance(terms, list):
+            return []
+
+        return [term for term in terms if isinstance(term, str)][:60]
+
+
+    def get_vocabulary(self, course_id):
+
+        if course_id not in self.courses:
+            return None
+
+        return self.courses[course_id].get("vocabulary", [])
+
+
+    def is_empty_note(self, note):
+        return note is None or not note.strip() or note.strip().lower().startswith("(rien d'important")
+
+
+    def summarize_chunk(self, chunk_text, vocabulary=None):
 
         if not chunk_text.strip():
             return None
 
-        return self.llm_client.ask(context=self.chunk_summary_context, text_interaction=chunk_text)
+        text_interaction = "Voici la transcription brute d'un extrait de cours. Fais-en les notes.\n\n"
+
+        if vocabulary:
+            text_interaction += f"Vocabulaire du cours : {', '.join(vocabulary)}\n\n"
+
+        text_interaction += f"<extrait>\n{chunk_text}\n</extrait>"
+
+        notes = self.llm_client.ask(context=self.chunk_summary_context, text_interaction=text_interaction)
+
+        if self.is_empty_note(note=notes) and len(chunk_text.split()) >= 120:
+            notes = self.llm_client.ask(
+                context=self.chunk_summary_context,
+                text_interaction=(
+                    text_interaction
+                    + "\n\nATTENTION : cet extrait est long et contient bien du cours. "
+                    + "Fais des notes sur ce qui y est expliqué, ne réponds pas « (rien d'important) »."
+                ),
+            )
+
+        return notes
 
 
     def get_course_transcript(self, course_id):
@@ -404,7 +489,28 @@ class StudyService:
         return self.courses[course_id]
 
 
-    def summarize_course(self, course_id, paced=False):
+    def group_notes(self, notes):
+
+        groups = []
+        current_group = []
+        current_size = 0
+
+        for note in notes:
+            if current_group and current_size + len(note) > self.max_summaries_size // 2:
+                groups.append(current_group)
+                current_group = []
+                current_size = 0
+
+            current_group.append(note)
+            current_size += len(note)
+
+        if current_group:
+            groups.append(current_group)
+
+        return groups
+
+
+    def summarize_course(self, course_id, paced=False, redo=False, progress=None):
 
         if course_id not in self.courses:
             return None
@@ -414,31 +520,47 @@ class StudyService:
         if course["chunk_count"] == 0:
             raise ValueError("Ce cours n'a pas encore de texte.")
 
+        if redo:
+            course["chunk_summaries"] = [None] * len(course["chunks"])
+
         chunk_summaries = []
 
         for index, chunk_text in enumerate(course["chunks"]):
             chunk_summary = course["chunk_summaries"][index]
 
             if chunk_summary is None:
-                chunk_summary = self.summarize_chunk(chunk_text=chunk_text)
+                chunk_summary = self.summarize_chunk(chunk_text=chunk_text, vocabulary=course.get("vocabulary"))
                 course["chunk_summaries"][index] = chunk_summary
+                self.save_course(course_id=course_id)
 
-            if chunk_summary is not None:
+            if not self.is_empty_note(note=chunk_summary):
                 chunk_summaries.append(chunk_summary)
 
+            if progress is not None:
+                progress(index + 1)
+
         if not chunk_summaries:
-            raise ValueError("Il n'y a rien à résumer dans ce cours.")
-
-        all_summaries = "\n\n".join(chunk_summaries)
-
-        if len(all_summaries) > self.max_summaries_size:
-            raise ValueError("Ce cours est trop long pour un résumé en une fois.")
+            raise ValueError(
+                "Aucune note exploitable : tous les extraits ont été jugés sans intérêt. "
+                "Vérifie la transcription (GET /study/courses/{id}/transcript), puis réessaie avec redo=true."
+            )
 
         ask = self.llm_client.ask_paced if paced else self.llm_client.ask
 
+        while len("\n\n".join(chunk_summaries)) > self.max_summaries_size:
+            groups = self.group_notes(notes=chunk_summaries)
+
+            if len(groups) >= len(chunk_summaries):
+                raise ValueError("Ce cours est trop long pour être résumé.")
+
+            chunk_summaries = [
+                ask(context=self.course_summary_context, text_interaction="\n\n".join(group))
+                for group in groups
+            ]
+
         summary = ask(
             context=self.course_summary_context,
-            text_interaction=all_summaries,
+            text_interaction="\n\n".join(chunk_summaries),
         )
 
         course["summary"] = summary
@@ -446,6 +568,64 @@ class StudyService:
         self.save_course(course_id=course_id)
 
         return summary
+
+
+    def prepare_summary_job(self, course_id, redo=False):
+
+        if course_id not in self.courses:
+            return None
+
+        course = self.courses[course_id]
+
+        if course["chunk_count"] == 0:
+            raise ValueError("Ce cours n'a pas encore de texte.")
+
+        job = self.summary_jobs.get(course_id)
+
+        if job is not None and job["status"] == "processing":
+            raise ValueError("Un résumé est déjà en cours pour ce cours.")
+
+        if redo:
+            course["chunk_summaries"] = [None] * len(course["chunks"])
+
+        self.summary_jobs[course_id] = {
+            "status": "processing",
+            "done_chunks": 0,
+            "chunk_count": course["chunk_count"],
+            "error": None,
+        }
+
+        return self.summary_jobs[course_id]
+
+
+    def process_summary_job(self, course_id):
+
+        job = self.summary_jobs[course_id]
+
+        def update_progress(done_chunks):
+            job["done_chunks"] = done_chunks
+
+        try:
+            self.summarize_course(course_id=course_id, paced=True, progress=update_progress)
+            job["status"] = "done"
+        except Exception as error:
+            job["status"] = "error"
+            job["error"] = str(error)
+
+
+    def get_summary_status(self, course_id):
+
+        job = self.summary_jobs.get(course_id)
+
+        if job is None:
+            return None
+
+        status = dict(job)
+
+        if job["status"] == "done":
+            status["summary"] = self.courses[course_id]["summary"]
+
+        return status
 
 
     def extract_pdf_text(self, pdf_bytes):
