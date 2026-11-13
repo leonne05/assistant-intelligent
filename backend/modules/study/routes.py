@@ -6,6 +6,7 @@ from typing import List, Literal, Optional
 from modules.study.audio_splitter import AudioSplitter
 from modules.study.explainer import Explainer
 from modules.study.exporter import StudyExporter
+from modules.study.flashcards import FlashcardManager
 from modules.study.lessons import LessonProcessor
 from modules.study.library import StudyLibrary
 from modules.study.long_audio import LongAudioProcessor
@@ -30,6 +31,11 @@ revision_planner = RevisionPlanner(
 revision_offers = RevisionOfferManager(study_service=study_service, revision_planner=revision_planner)
 explainer = Explainer(study_service=study_service, subject_manager=subject_manager)
 course_marks = CourseMarks(study_service=study_service)
+flashcards = FlashcardManager(
+    study_service=study_service,
+    subject_manager=subject_manager,
+    study_exporter=study_exporter,
+)
 study_library = StudyLibrary(
     study_service=study_service,
     subject_manager=subject_manager,
@@ -81,6 +87,11 @@ class RevisionPlanRequest(BaseModel):
 class RevisionAnswer(BaseModel):
     accept: bool
     minutes_per_day: int = 60
+
+
+
+class FlashcardRequest(BaseModel):
+    card_count: int = Field(default=10, ge=3, le=30)
 
 
 
@@ -779,3 +790,102 @@ def get_marked_summary(course_id: str):
         raise HTTPException(status_code=404, detail="Cours introuvable.")
 
     return result
+
+
+def make_download(exported):
+    return Response(
+        content=exported["data"],
+        media_type=exported["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{exported["file_name"]}"'},
+    )
+
+
+@router.post("/courses/{course_id}/flashcards")
+def create_flashcards(course_id: str, request: FlashcardRequest):
+
+    try:
+        deck = flashcards.generate(course_id=course_id, card_count=request.card_count)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Le service est indisponible ou les fiches sont invalides, réessaie dans une minute.")
+
+    if deck is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return deck
+
+
+@router.get("/courses/{course_id}/flashcards")
+def get_flashcards(course_id: str):
+    deck = flashcards.get_deck(course_id=course_id)
+
+    if deck is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return deck
+
+
+@router.get("/courses/{course_id}/flashcards/export")
+def export_flashcards(course_id: str, file_format: str = Query("csv", alias="format")):
+
+    try:
+        exported = flashcards.export_course(course_id=course_id, file_format=file_format or "csv")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if exported is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return make_download(exported=exported)
+
+
+@router.delete("/courses/{course_id}/flashcards/{card_id}")
+def delete_flashcard(course_id: str, card_id: str):
+    deleted = flashcards.delete_card(course_id=course_id, card_id=card_id)
+
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Fiche introuvable.")
+
+    return {"course_id": course_id, "card_id": card_id, "deleted": True}
+
+
+@router.delete("/courses/{course_id}/flashcards")
+def delete_flashcards(course_id: str):
+    count = flashcards.delete_deck(course_id=course_id)
+
+    if count is None:
+        raise HTTPException(status_code=404, detail="Cours introuvable.")
+
+    return {"course_id": course_id, "deleted_cards": count}
+
+
+@router.get("/subjects/{subject}/flashcards")
+def get_subject_flashcards(subject: str):
+
+    try:
+        deck = flashcards.get_subject_deck(subject=subject)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if deck is None:
+        raise HTTPException(status_code=404, detail="Matière introuvable.")
+
+    return deck
+
+
+@router.get("/subjects/{subject}/flashcards/export")
+def export_subject_flashcards(subject: str, file_format: str = Query("csv", alias="format")):
+
+    try:
+        exported = flashcards.export_subject(subject=subject, file_format=file_format or "csv")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if exported is None:
+        raise HTTPException(status_code=404, detail="Matière introuvable.")
+
+    return make_download(exported=exported)
