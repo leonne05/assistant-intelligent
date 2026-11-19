@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
+from modules.meetings.appointment_detector import AppointmentDetector
 from modules.meetings.long_audio import MeetingAudioProcessor
 from modules.meetings.message_sender import SimulatedMessageSender
 from modules.meetings.report_manager import ReportManager
@@ -13,7 +14,12 @@ from modules.study.exporter import StudyExporter
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 meetings_service = MeetingsService()
-meeting_audio_processor = MeetingAudioProcessor(meetings_service=meetings_service, splitter=AudioSplitter())
+appointment_detector = AppointmentDetector(meetings_service=meetings_service)
+meeting_audio_processor = MeetingAudioProcessor(
+    meetings_service=meetings_service,
+    splitter=AudioSplitter(),
+    appointment_detector=appointment_detector,
+)
 spoken_text_builder = SpokenTextBuilder()
 report_manager = ReportManager(
     meetings_service=meetings_service,

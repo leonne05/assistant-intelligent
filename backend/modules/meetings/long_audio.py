@@ -2,9 +2,10 @@ import time
 
 
 class MeetingAudioProcessor:
-    def __init__(self, meetings_service, splitter):
+    def __init__(self, meetings_service, splitter, appointment_detector=None):
         self.meetings_service = meetings_service
         self.splitter = splitter
+        self.appointment_detector = appointment_detector
         self.jobs = {}
 
         self.max_audio_bytes = 600 * 1024 * 1024
@@ -33,7 +34,7 @@ class MeetingAudioProcessor:
 
         job = self.jobs.get(meeting_id)
 
-        if job is not None and job["status"] in ("splitting", "transcribing", "reporting"):
+        if job is not None and job["status"] in ("splitting", "transcribing", "reporting", "detecting"):
             raise ValueError("Un audio est déjà en cours de traitement pour cette réunion.")
 
         self.jobs[meeting_id] = {
@@ -43,6 +44,7 @@ class MeetingAudioProcessor:
             "done_parts": 0,
             "auto_report": auto_report,
             "report_error": None,
+            "appointment_error": None,
             "error": None,
         }
 
@@ -67,6 +69,10 @@ class MeetingAudioProcessor:
                 job["status"] = "reporting"
                 self.write_report(meeting_id=meeting_id, job=job)
 
+            if self.appointment_detector is not None:
+                job["status"] = "detecting"
+                self.detect_appointments(meeting_id=meeting_id, job=job)
+
             job["status"] = "done"
 
         except Exception as error:
@@ -80,6 +86,17 @@ class MeetingAudioProcessor:
             self.meetings_service.generate_report(meeting_id=meeting_id)
         except Exception as error:
             job["report_error"] = str(error)
+
+
+    def detect_appointments(self, meeting_id, job):
+
+        try:
+            result = self.appointment_detector.detect(meeting_id=meeting_id)
+
+            if result["failed_chunks"]:
+                job["appointment_error"] = f"{result['failed_chunks']} extrait(s) n'ont pas pu être analysés."
+        except Exception as error:
+            job["appointment_error"] = str(error)
 
 
     def transcribe_part(self, meeting_id, part_name, part_bytes):
