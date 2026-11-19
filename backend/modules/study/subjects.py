@@ -129,6 +129,7 @@ class SubjectManager:
         for number, course_id, course in lessons:
             self.study_service.delete_course(course_id=course_id)
 
+        self.study_service.memory.delete_plans(subject=subject_name)
         self.study_service.memory.delete_subject(name=subject_name)
 
         return {"name": subject_name, "deleted": True, "deleted_lessons": len(lessons)}

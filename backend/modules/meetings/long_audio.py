@@ -13,7 +13,7 @@ class MeetingAudioProcessor:
         self.retry_wait = 30
 
 
-    def prepare(self, meeting_id, audio_file_name, audio_bytes, user_consent):
+    def prepare(self, meeting_id, audio_file_name, audio_bytes, user_consent, auto_report=True):
 
         meeting = self.meetings_service.meetings.get(meeting_id)
 
@@ -33,7 +33,7 @@ class MeetingAudioProcessor:
 
         job = self.jobs.get(meeting_id)
 
-        if job is not None and job["status"] in ("splitting", "transcribing"):
+        if job is not None and job["status"] in ("splitting", "transcribing", "reporting"):
             raise ValueError("Un audio est déjà en cours de traitement pour cette réunion.")
 
         self.jobs[meeting_id] = {
@@ -41,6 +41,8 @@ class MeetingAudioProcessor:
             "status": "splitting",
             "part_count": 0,
             "done_parts": 0,
+            "auto_report": auto_report,
+            "report_error": None,
             "error": None,
         }
 
@@ -61,11 +63,23 @@ class MeetingAudioProcessor:
                 self.transcribe_part(meeting_id=meeting_id, part_name=part_name, part_bytes=part_bytes)
                 job["done_parts"] = index + 1
 
+            if job["auto_report"]:
+                job["status"] = "reporting"
+                self.write_report(meeting_id=meeting_id, job=job)
+
             job["status"] = "done"
 
         except Exception as error:
             job["status"] = "error"
             job["error"] = str(error)
+
+
+    def write_report(self, meeting_id, job):
+
+        try:
+            self.meetings_service.generate_report(meeting_id=meeting_id)
+        except Exception as error:
+            job["report_error"] = str(error)
 
 
     def transcribe_part(self, meeting_id, part_name, part_bytes):
