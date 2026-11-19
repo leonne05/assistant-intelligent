@@ -1,12 +1,15 @@
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from typing import List
 
+from modules.meetings.long_audio import MeetingAudioProcessor
 from modules.meetings.service import MeetingsService
+from modules.study.audio_splitter import AudioSplitter
 
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 meetings_service = MeetingsService()
+meeting_audio_processor = MeetingAudioProcessor(meetings_service=meetings_service, splitter=AudioSplitter())
 
 
 
@@ -123,6 +126,50 @@ def transcribe_chunk(
         raise HTTPException(status_code=404, detail="Réunion introuvable.")
 
     return result
+
+
+@router.post("/{meeting_id}/audio")
+def upload_meeting_audio(
+    meeting_id: str,
+    background_tasks: BackgroundTasks,
+    audio_file: UploadFile = File(...),
+    user_consent: bool = Form(...),
+):
+    audio_bytes = audio_file.file.read()
+
+    try:
+        job = meeting_audio_processor.prepare(
+            meeting_id=meeting_id,
+            audio_file_name=audio_file.filename,
+            audio_bytes=audio_bytes,
+            user_consent=user_consent,
+        )
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Réunion introuvable.")
+
+    background_tasks.add_task(
+        meeting_audio_processor.process,
+        meeting_id=meeting_id,
+        audio_file_name=audio_file.filename,
+        audio_bytes=audio_bytes,
+    )
+
+    return {"meeting_id": meeting_id, **job}
+
+
+@router.get("/{meeting_id}/audio")
+def get_meeting_audio_status(meeting_id: str):
+    status = meeting_audio_processor.get_status(meeting_id=meeting_id)
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Aucun audio envoyé pour cette réunion.")
+
+    return {"meeting_id": meeting_id, **status}
 
 
 @router.post("/{meeting_id}/report")

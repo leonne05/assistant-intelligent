@@ -17,6 +17,7 @@ class MeetingsService:
         self.chunk_notes_context = LlmClient.read_file(file_path=os.path.join(folder, "context_meeting_chunk.txt"))
         self.report_context = LlmClient.read_file(file_path=os.path.join(folder, "context_meeting_report.txt"))
         self.actions_context = LlmClient.read_file(file_path=os.path.join(folder, "context_meeting_actions.txt"))
+        self.condense_context = LlmClient.read_file(file_path=os.path.join(folder, "context_meeting_condense.txt"))
 
         self.week_days = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
         self.months = [
@@ -217,10 +218,11 @@ class MeetingsService:
             audio_bytes=audio_bytes,
             language="fr",
             prompt=self.get_transcription_prompt(meeting=meeting),
+            vocabulary=self.get_vocabulary(meeting=meeting),
         )
 
         try:
-            chunk_summary = self.summarize_chunk(chunk_text=chunk_text)
+            chunk_summary = self.summarize_chunk(chunk_text=chunk_text, meeting=meeting)
         except Exception:
             chunk_summary = None
 
@@ -240,6 +242,19 @@ class MeetingsService:
         }
 
 
+    def get_vocabulary(self, meeting):
+
+        words = []
+        texts = [participant["name"] for participant in meeting["participants"]] + meeting["agenda"]
+
+        for text in texts:
+            for word in text.replace(",", " ").split():
+                if len(word) >= 3 and word.lower() not in [kept.lower() for kept in words]:
+                    words.append(word)
+
+        return words[:100]
+
+
     def get_transcription_prompt(self, meeting):
 
         hints = []
@@ -251,21 +266,60 @@ class MeetingsService:
         if meeting["agenda"]:
             hints.append("Sujets : " + ", ".join(meeting["agenda"]) + ".")
 
-        hints_text = " ".join(hints)[:200]
-        previous_text_end = meeting["transcript"][-250:]
-
-        if previous_text_end:
-            return (hints_text + " " + previous_text_end).strip()
-
-        return (self.default_prompt + " " + hints_text).strip()
+        return (self.default_prompt + " " + " ".join(hints))[:400]
 
 
-    def summarize_chunk(self, chunk_text):
+    def is_empty_note(self, note):
+        return note is None or not note.strip() or note.strip().lower().startswith("(rien d'important")
+
+
+    def summarize_chunk(self, chunk_text, meeting=None):
 
         if not chunk_text.strip():
             return None
 
-        return self.llm_client.ask(context=self.chunk_notes_context, text_interaction=chunk_text)
+        text_interaction = "Voici la transcription brute d'un extrait de réunion. Fais-en les notes.\n\n"
+
+        if meeting is not None and meeting["participants"]:
+            names = ", ".join(participant["name"] for participant in meeting["participants"])
+            text_interaction += f"Participants : {names}\n\n"
+
+        text_interaction += f"<extrait>\n{chunk_text}\n</extrait>"
+
+        notes = self.llm_client.ask(context=self.chunk_notes_context, text_interaction=text_interaction)
+
+        if self.is_empty_note(note=notes) and len(chunk_text.split()) >= 120:
+            notes = self.llm_client.ask(
+                context=self.chunk_notes_context,
+                text_interaction=(
+                    text_interaction
+                    + "\n\nATTENTION : cet extrait est long et contient bien de la réunion. "
+                    + "Fais des notes sur ce qui y est dit, ne réponds pas « (rien d'important) »."
+                ),
+            )
+
+        return notes
+
+
+    def group_notes(self, notes):
+
+        groups = []
+        current_group = []
+        current_size = 0
+
+        for note in notes:
+            if current_group and current_size + len(note) > self.max_notes_size // 2:
+                groups.append(current_group)
+                current_group = []
+                current_size = 0
+
+            current_group.append(note)
+            current_size += len(note)
+
+        if current_group:
+            groups.append(current_group)
+
+        return groups
 
 
     def format_date(self, day):
@@ -389,19 +443,31 @@ class MeetingsService:
             chunk_summary = meeting["chunk_summaries"][index]
 
             if chunk_summary is None:
-                chunk_summary = self.summarize_chunk(chunk_text=chunk_text)
+                chunk_summary = self.summarize_chunk(chunk_text=chunk_text, meeting=meeting)
                 meeting["chunk_summaries"][index] = chunk_summary
+                self.save_meeting(meeting_id=meeting_id)
 
-            if chunk_summary is not None:
+            if not self.is_empty_note(note=chunk_summary):
                 notes.append(chunk_summary)
 
         if not notes:
-            raise ValueError("Il n'y a rien à résumer dans cette réunion.")
+            raise ValueError(
+                "Aucune note exploitable : tous les extraits ont été jugés sans intérêt. "
+                "Vérifie la transcription de la réunion."
+            )
+
+        while len("\n\n".join(notes)) > self.max_notes_size:
+            groups = self.group_notes(notes=notes)
+
+            if len(groups) >= len(notes):
+                raise ValueError("Cette réunion est trop longue pour un compte rendu.")
+
+            notes = [
+                self.llm_client.ask_paced(context=self.condense_context, text_interaction="\n\n".join(group))
+                for group in groups
+            ]
 
         all_notes = "\n\n".join(notes)
-
-        if len(all_notes) > self.max_notes_size:
-            raise ValueError("Cette réunion est trop longue pour un compte rendu en une fois.")
 
         meeting_text = self.get_meeting_header(meeting=meeting) + "\n\n## Notes prises pendant la réunion\n\n" + all_notes
 
