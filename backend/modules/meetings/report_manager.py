@@ -194,6 +194,8 @@ class ReportManager:
         if action is None:
             return False
 
+        content_changed = what is not None or who is not None or due is not None
+
         if what is not None:
             what = " ".join(what.split())[:300]
 
@@ -214,7 +216,9 @@ class ReportManager:
 
             action["status"] = status
 
-        self.mark_as_draft(report=report)
+        if content_changed:
+            self.mark_as_draft(report=report)
+
         self.meetings_service.save_meeting(meeting_id=meeting_id)
 
         return action
